@@ -69,3 +69,7 @@ class ParquetRepository(ABC):
     @abstractmethod
     def exists(self, symbol: str) -> bool:
         """Return True if a Parquet file exists for the symbol."""
+
+    @abstractmethod
+    def append(self, symbol: str, data: pd.DataFrame) -> Path:
+        """Append rows to an existing symbol file without introducing duplicates."""

@@ -73,3 +73,27 @@ class FileParquetRepository(ParquetRepository):
 
     def exists(self, symbol: str) -> bool:
         return self._file_path(symbol).exists()
+
+    def append(self, symbol: str, data: pd.DataFrame) -> Path:
+        """Append OHLCV rows, de-duplicating on ``date`` before rewrite."""
+        try:
+            if self.exists(symbol):
+                existing = self.read(symbol)
+                combined = pd.concat([existing, data], ignore_index=True)
+            else:
+                combined = data.copy()
+
+            combined = (
+                combined[list(OHLCV_COLUMNS)]
+                .drop_duplicates(subset=["date"], keep="last")
+                .sort_values("date")
+                .reset_index(drop=True)
+            )
+            return self.write(symbol, combined)
+        except RepositoryError:
+            raise
+        except Exception as exc:
+            logger.exception("Failed to append Parquet rows for %s", symbol)
+            raise RepositoryError(
+                f"Failed to append Parquet file for '{symbol}': {exc}",
+            ) from exc

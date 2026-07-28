@@ -52,3 +52,17 @@ def test_parquet_delete(storage_settings) -> None:
     assert repo.delete("TCS") is True
     assert repo.exists("TCS") is False
     assert repo.delete("TCS") is False
+
+
+def test_parquet_append_prevents_duplicate_dates(storage_settings) -> None:
+    """Appending overlapping rows keeps one row per date."""
+    repo = FileParquetRepository(storage_settings.parquet_storage_dir)
+    first = make_ohlcv_dataframe(rows=3)
+    second = make_ohlcv_dataframe(rows=3)
+    second.loc[2, "date"] = second.loc[1, "date"]
+
+    repo.write("INFY", first)
+    repo.append("INFY", second)
+    combined = repo.read("INFY")
+
+    assert combined["date"].duplicated().sum() == 0

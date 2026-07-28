@@ -10,6 +10,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.market_data.exceptions import ProviderError, RepositoryError, StorageError
+from app.market_data.exceptions import ValidationError as StorageValidationError
+
 logger = logging.getLogger("app.exceptions")
 
 
@@ -113,9 +116,37 @@ async def unhandled_exception_handler(
     )
 
 
+async def storage_exception_handler(
+    _request: Request,
+    exc: StorageError,
+) -> JSONResponse:
+    """Map storage/provider errors to stable JSON API responses."""
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    code = "STORAGE_ERROR"
+    details = None
+
+    if isinstance(exc, StorageValidationError):
+        status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+        code = "MARKET_DATA_VALIDATION_ERROR"
+        details = exc.details
+    elif isinstance(exc, ProviderError):
+        status_code = status.HTTP_502_BAD_GATEWAY
+        code = "MARKET_DATA_PROVIDER_ERROR"
+    elif isinstance(exc, RepositoryError):
+        status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        code = "MARKET_DATA_REPOSITORY_ERROR"
+
+    logger.warning("Storage error [%s]: %s", code, exc)
+    return JSONResponse(
+        status_code=status_code,
+        content=_error_body(code=code, message=str(exc), details=details),
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Attach global exception handlers to the FastAPI application."""
     app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(StorageError, storage_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, validation_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unhandled_exception_handler)

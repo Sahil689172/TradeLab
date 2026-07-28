@@ -21,3 +21,9 @@ class RepositoryError(StorageError):
     """Raised when a repository read/write/delete operation fails."""
 
     pass
+
+
+class ProviderError(StorageError):
+    """Raised when the external market data provider fails."""
+
+    pass

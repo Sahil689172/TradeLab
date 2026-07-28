@@ -1,7 +1,8 @@
-"""Public gateway for market data storage operations."""
+"""Public gateway for market data storage and ingestion operations."""
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 
 import pandas as pd
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.market_data.exceptions import RepositoryError, StorageError, ValidationError
+from app.market_data.providers import MarketDataProvider, YFinanceProvider
 from app.market_data.repositories.company_metadata_repository import (
     SQLiteCompanyMetadataRepository,
 )
@@ -17,8 +19,12 @@ from app.market_data.repositories.ingestion_state_repository import (
     SQLiteIngestionStateRepository,
 )
 from app.market_data.repositories.parquet_repository import FileParquetRepository
+from app.market_data.schemas.api import IngestionOperationResult, MarketStatusResponse
 from app.market_data.schemas.company_metadata import CompanyMetadata
 from app.market_data.schemas.ingestion_state import IngestionState
+from app.market_data.services.bootstrap_engine import BootstrapEngine
+from app.market_data.services.incremental_update_engine import IncrementalUpdateEngine
+from app.market_data.services.metadata_sync_service import MetadataSyncService
 from app.market_data.validators.ohlcv_validator import OHLCVValidator
 
 logger = get_logger(__name__)
@@ -38,6 +44,7 @@ class MarketDataGateway:
         parquet_repository: FileParquetRepository | None = None,
         metadata_repository: SQLiteCompanyMetadataRepository | None = None,
         ingestion_repository: SQLiteIngestionStateRepository | None = None,
+        provider: MarketDataProvider | None = None,
         validator: OHLCVValidator | None = None,
         settings: Settings | None = None,
     ) -> None:
@@ -48,6 +55,25 @@ class MarketDataGateway:
         self._ingestion_repo = ingestion_repository or SQLiteIngestionStateRepository(session)
         self._parquet_repo = parquet_repository or FileParquetRepository(cfg.parquet_storage_dir)
         self._validator = validator or OHLCVValidator()
+        self._provider = provider or YFinanceProvider(cfg)
+        self._bootstrap_engine = BootstrapEngine(
+            self._provider,
+            self._parquet_repo,
+            self._metadata_repo,
+            self._ingestion_repo,
+            self._validator,
+            cfg,
+        )
+        self._update_engine = IncrementalUpdateEngine(
+            self._provider,
+            self._parquet_repo,
+            self._ingestion_repo,
+            self._validator,
+        )
+        self._metadata_sync_service = MetadataSyncService(
+            self._provider,
+            self._metadata_repo,
+        )
 
     def save_history(self, symbol: str, data: pd.DataFrame) -> Path:
         """Validate and persist OHLCV history to Parquet.
@@ -128,7 +154,57 @@ class MarketDataGateway:
         """Return True when a Parquet file exists for the symbol."""
         return self._parquet_repo.exists(symbol)
 
+    def download_history(self, symbol: str, **kwargs: object) -> pd.DataFrame:
+        """Download raw history from the provider without storing it."""
+        return self._provider.download_history(symbol, **kwargs)
+
+    def download_metadata(self, symbol: str) -> CompanyMetadata:
+        """Download raw normalized metadata from the provider without storing it."""
+        return self._provider.download_metadata(symbol)
+
+    def bootstrap_symbol(self, symbol: str) -> IngestionOperationResult:
+        """Bootstrap a symbol if it does not already exist locally."""
+        result = self._bootstrap_engine.bootstrap_symbol(symbol)
+        return IngestionOperationResult(**asdict(result))
+
+    def bootstrap_all(self, symbols: list[str]) -> list[IngestionOperationResult]:
+        """Bootstrap multiple symbols in order."""
+        return [self.bootstrap_symbol(symbol) for symbol in symbols]
+
+    def update_symbol(self, symbol: str) -> IngestionOperationResult:
+        """Incrementally update one locally stored symbol."""
+        result = self._update_engine.update_symbol(symbol)
+        return IngestionOperationResult(**asdict(result))
+
+    def update_all(self, symbols: list[str]) -> list[IngestionOperationResult]:
+        """Incrementally update multiple locally stored symbols."""
+        return [self.update_symbol(symbol) for symbol in symbols]
+
+    def refresh_metadata(self, symbol: str) -> IngestionOperationResult:
+        """Refresh company metadata for one symbol."""
+        metadata = self._metadata_sync_service.refresh(symbol)
+        state = self._ingestion_repo.get(metadata.symbol)
+        return IngestionOperationResult(
+            symbol=metadata.symbol,
+            status="metadata_refreshed",
+            rows_downloaded=0,
+            rows_added=0,
+            message="Metadata refreshed",
+            metadata=metadata,
+            ingestion_state=state,
+        )
+
+    def get_status(self, symbol: str) -> MarketStatusResponse:
+        """Return current metadata, ingestion state, and history presence."""
+        normalized_symbol = symbol.strip().upper()
+        return MarketStatusResponse(
+            symbol=normalized_symbol,
+            history_exists=self.history_exists(normalized_symbol),
+            metadata=self.get_metadata(normalized_symbol),
+            ingestion_state=self.get_ingestion_state(normalized_symbol),
+        )
+
 
 def get_market_data_gateway(session: Session) -> MarketDataGateway:
-    """FastAPI-compatible factory for dependency injection."""
+    """Construct the public market data gateway."""
     return MarketDataGateway(session)

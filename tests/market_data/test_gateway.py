@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 
 from app.market_data.exceptions import RepositoryError, ValidationError
-from tests.market_data.conftest import make_company_metadata, make_ingestion_state, make_ohlcv_dataframe
+from tests.market_data.conftest import (
+    make_company_metadata,
+    make_ingestion_state,
+    make_ohlcv_dataframe,
+)
 
 
 def test_gateway_save_and_get_history(gateway) -> None:
@@ -74,3 +78,52 @@ def test_gateway_delete_history(gateway) -> None:
     gateway.save_history("HDFCBANK", make_ohlcv_dataframe())
     assert gateway.delete_history("HDFCBANK") is True
     assert gateway.history_exists("HDFCBANK") is False
+
+
+def test_gateway_bootstrap_symbol(gateway) -> None:
+    """Gateway bootstraps a new symbol through the provider."""
+    result = gateway.bootstrap_symbol("RELIANCE")
+    assert result.status == "bootstrapped"
+    assert result.rows_downloaded > 0
+    assert result.metadata is not None
+    assert result.ingestion_state is not None
+    assert gateway.history_exists("RELIANCE") is True
+
+
+def test_gateway_bootstrap_skips_existing_symbol(gateway) -> None:
+    """Bootstrap does nothing when history already exists locally."""
+    first = gateway.bootstrap_symbol("TCS")
+    second = gateway.bootstrap_symbol("TCS")
+    assert first.status == "bootstrapped"
+    assert second.status == "skipped"
+    assert second.rows_downloaded == 0
+
+
+def test_gateway_update_symbol_appends_missing_rows(gateway) -> None:
+    """Incremental update appends only missing dates and updates state."""
+    bootstrap = gateway.bootstrap_symbol("INFY")
+    assert bootstrap.ingestion_state is not None
+
+    result = gateway.update_symbol("INFY")
+    assert result.status in {"updated", "up_to_date"}
+    assert result.ingestion_state is not None
+    history = gateway.get_history("INFY")
+    assert history["date"].duplicated().sum() == 0
+
+
+def test_gateway_refresh_metadata(gateway) -> None:
+    """Metadata refresh upserts company metadata."""
+    result = gateway.refresh_metadata("SBIN")
+    assert result.status == "metadata_refreshed"
+    assert result.metadata is not None
+    assert result.metadata.symbol == "SBIN"
+
+
+def test_gateway_status(gateway) -> None:
+    """Status shows whether history and metadata exist."""
+    gateway.bootstrap_symbol("AXISBANK")
+    status = gateway.get_status("AXISBANK")
+    assert status.symbol == "AXISBANK"
+    assert status.history_exists is True
+    assert status.metadata is not None
+    assert status.ingestion_state is not None

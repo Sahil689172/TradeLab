@@ -6,6 +6,7 @@ This repository contains:
 
 - **Phase A1** — FastAPI application foundation
 - **Phase A2.1** — Market data storage infrastructure (SQLite + Parquet)
+- **Phase A2.2** — Yahoo Finance ingestion, bootstrap, incremental sync, market API
 
 ## Features
 
@@ -29,6 +30,16 @@ This repository contains:
 - OHLCV validator before Parquet writes
 - `MarketDataGateway` as the single public storage interface
 - Comprehensive unit tests (no download/API/ingestion logic)
+
+### Phase A2.2 — Market Data Ingestion
+
+- Yahoo Finance provider abstraction and implementation
+- First-time bootstrap for new symbols
+- Incremental update engine using `last_available_date`
+- Metadata synchronization into SQLite
+- Gateway orchestration for bootstrap/update/metadata refresh
+- Market ingestion API endpoints under `/api/v1/market/*`
+- Mock-based provider and API test coverage
 
 ## Requirements
 
@@ -65,6 +76,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | Root | http://127.0.0.1:8000/ |
 | Health | http://127.0.0.1:8000/health |
 | API v1 | http://127.0.0.1:8000/api/v1/ |
+| Market bootstrap | http://127.0.0.1:8000/api/v1/market/bootstrap/RELIANCE.NS |
 | Swagger UI | http://127.0.0.1:8000/docs |
 | ReDoc | http://127.0.0.1:8000/redoc |
 
@@ -72,7 +84,7 @@ On startup the app creates:
 
 ```text
 backend/data/metadata.db
-backend/data/ohlcv/     # empty until ingestion (Phase A2.2+)
+backend/data/ohlcv/     # Parquet history files created by bootstrap/update
 backend/data/logs/
 ```
 
@@ -89,6 +101,8 @@ backend/data/logs/
 | `PARQUET_STORAGE_DIR` | OHLCV Parquet directory | `backend/data/ohlcv` |
 | `LOG_DIRECTORY` | Log file directory | `backend/data/logs` |
 | `DATABASE_URL` | App DB URL (health check) | `sqlite:///backend/data/metadata.db` |
+| `BOOTSTRAP_HISTORY_YEARS` | First-time history window | `10` |
+| `YFINANCE_TIMEOUT_SECONDS` | Provider timeout | `30` |
 | `LOG_LEVEL` | Log level | `INFO` |
 | `LOG_FORMAT` | `console` or `json` | `console` |
 
@@ -113,12 +127,13 @@ TradeLab/
 │   │   ├── exceptions.py
 │   │   └── logging.py
 │   ├── db/                    # Re-exports from core.database
-│   ├── market_data/           # Phase A2.1 storage layer
+│   ├── market_data/           # Phase A2.x market data module
 │   │   ├── models/            # SQLAlchemy ORM
+│   │   ├── providers/         # Yahoo Finance integration
 │   │   ├── schemas/           # Pydantic contracts
 │   │   ├── repositories/      # SQLite + Parquet CRUD
 │   │   ├── validators/        # OHLCV validation
-│   │   ├── services/          # MarketDataGateway
+│   │   ├── services/          # Gateway + bootstrap/update services
 │   │   └── exceptions.py
 │   ├── middleware/
 │   ├── schemas/               # API response models
@@ -148,6 +163,6 @@ gateway = MarketDataGateway(session)
 
 Repositories and validators remain internal implementation details.
 
-## Out of scope (not in A2.1)
+## Out of scope (not in A2.2)
 
-yfinance, data download, bootstrap, incremental updates, API endpoints for market data, schedulers, caching, and placeholder ingestion code.
+indicators, feature engineering, ML, Monte Carlo, backtesting, paper trading, schedulers, caching, and non-market modules.

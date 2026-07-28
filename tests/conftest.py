@@ -7,9 +7,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.deps import get_market_data_gateway
 from app.core.config import Settings, clear_settings_cache
 from app.core.database import reset_db_state
+from tests.market_data.conftest import FakeProvider
 from app.main import create_app
+from app.market_data.services.market_data_gateway import MarketDataGateway
 
 
 @pytest.fixture()
@@ -50,3 +53,16 @@ def client(app) -> TestClient:
     """Return a TestClient with lifespan events enabled."""
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture()
+def api_gateway(test_settings: Settings):
+    """Override the API gateway dependency with a fake provider-backed gateway."""
+
+    def _factory():
+        from app.core.database import get_session_factory
+
+        session = get_session_factory()()
+        return MarketDataGateway(session, settings=test_settings, provider=FakeProvider())
+
+    return _factory

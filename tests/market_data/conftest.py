@@ -1,4 +1,4 @@
-"""Shared fixtures for market data storage tests."""
+"""Shared fixtures for market data storage and ingestion tests."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, clear_settings_cache
 from app.core.database import get_session_factory, init_db, reset_db_state
 from app.core.storage_paths import ensure_storage_directories
+from app.market_data.providers.base_provider import MarketDataProvider
 from app.market_data.schemas.company_metadata import CompanyMetadata
 from app.market_data.schemas.ingestion_state import IngestionState
 from app.market_data.services.market_data_gateway import MarketDataGateway
@@ -57,7 +58,11 @@ def db_session(storage_settings: Settings) -> Session:
 @pytest.fixture()
 def gateway(db_session: Session, storage_settings: Settings) -> MarketDataGateway:
     """Market data gateway wired to the test session and storage paths."""
-    return MarketDataGateway(db_session, settings=storage_settings)
+    return MarketDataGateway(
+        db_session,
+        settings=storage_settings,
+        provider=FakeProvider(),
+    )
 
 
 def make_ohlcv_dataframe(rows: int = 3) -> pd.DataFrame:
@@ -105,3 +110,36 @@ def make_ingestion_state(symbol: str = "RELIANCE") -> IngestionState:
         last_fetch_status="success",
         row_count=1000,
     )
+
+
+class FakeProvider(MarketDataProvider):
+    """Deterministic provider used by tests to avoid network access."""
+
+    def download_history(
+        self,
+        symbol: str,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        period: str | None = None,
+    ) -> pd.DataFrame:
+        frame = make_ohlcv_dataframe(rows=5)
+        if start_date is not None:
+            frame = frame[frame["date"] >= start_date]
+        if end_date is not None:
+            frame = frame[frame["date"] < end_date]
+        return frame.reset_index(drop=True)
+
+    def download_metadata(self, symbol: str) -> CompanyMetadata:
+        return make_company_metadata(symbol.strip().upper())
+
+    def download_company_info(self, symbol: str) -> dict[str, object]:
+        metadata = self.download_metadata(symbol)
+        return {
+            "longName": metadata.company_name,
+            "sector": metadata.sector,
+            "industry": metadata.industry,
+            "exchange": metadata.exchange,
+            "currency": metadata.currency,
+            "marketCap": metadata.market_cap,
+        }

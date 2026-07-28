@@ -60,6 +60,20 @@ class Settings(BaseSettings):
         description="SQLAlchemy database URL used by the FastAPI app",
     )
 
+    # Ingestion (Phase A2.2)
+    bootstrap_history_years: int = Field(
+        default=10,
+        ge=1,
+        le=50,
+        description="Number of years requested for first-time bootstrap downloads",
+    )
+    yfinance_timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=300,
+        description="Timeout for Yahoo Finance provider requests",
+    )
+
     # Logging
     log_level: str = Field(default="INFO", description="Root log level")
     log_format: Literal["console", "json"] = Field(
