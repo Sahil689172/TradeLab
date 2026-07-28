@@ -1,20 +1,34 @@
 # TradeLab
 
-AI-powered Indian Stock Market Analysis Platform — **Quant Engine** foundation.
+AI-powered Indian Stock Market Analysis Platform — **Quant Engine**.
 
-This repository currently contains **Phase A1: Quant Foundation** — a clean, minimal FastAPI backend ready for the Indian Market Data Service (Phase A2).
+This repository contains:
 
-## Features (Phase A1)
+- **Phase A1** — FastAPI application foundation
+- **Phase A2.1** — Market data storage infrastructure (SQLite + Parquet)
+
+## Features
+
+### Phase A1 — Quant Foundation
 
 - FastAPI application factory with lifespan hooks
 - Environment-based configuration (Pydantic Settings + python-dotenv)
-- SQLite + SQLAlchemy engine, session dependency, and declarative base
-- Structured console logging (startup, shutdown, requests, exceptions)
-- Global exception handlers with consistent JSON error envelopes
+- Structured console logging and global exception handlers
 - `GET /` root metadata and `GET /health` connectivity check
 - Versioned API mount at `/api/v1`
 - OpenAPI, Swagger UI (`/docs`), and ReDoc (`/redoc`)
-- Pytest suite for health, root, startup, and database initialization
+
+### Phase A2.1 — Market Data Storage
+
+- Configurable storage paths (no hardcoded directories)
+- SQLite metadata database (`backend/data/metadata.db`)
+- Parquet OHLCV file store (`backend/data/ohlcv/`)
+- ORM models: `company_metadata`, `ingestion_state`
+- Pydantic contracts: `CompanyMetadata`, `IngestionState`, `OHLCVRecord`
+- Repository layer (SQLite + Parquet) with CRUD only
+- OHLCV validator before Parquet writes
+- `MarketDataGateway` as the single public storage interface
+- Comprehensive unit tests (no download/API/ingestion logic)
 
 ## Requirements
 
@@ -24,17 +38,10 @@ This repository currently contains **Phase A1: Quant Foundation** — a clean, m
 ## Project setup
 
 ```bash
-# Clone / enter the project
 cd TradeLab
-
-# Create and activate a virtual environment (Windows PowerShell)
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-
-# Install dependencies
+.\.venv\Scripts\Activate.ps1    # Windows
 pip install -r requirements.txt
-
-# Copy environment file
 copy .env.example .env
 ```
 
@@ -53,8 +60,6 @@ cp .env.example .env
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Then open:
-
 | Resource | URL |
 |----------|-----|
 | Root | http://127.0.0.1:8000/ |
@@ -62,82 +67,87 @@ Then open:
 | API v1 | http://127.0.0.1:8000/api/v1/ |
 | Swagger UI | http://127.0.0.1:8000/docs |
 | ReDoc | http://127.0.0.1:8000/redoc |
-| OpenAPI JSON | http://127.0.0.1:8000/openapi.json |
+
+On startup the app creates:
+
+```text
+backend/data/metadata.db
+backend/data/ohlcv/     # empty until ingestion (Phase A2.2+)
+backend/data/logs/
+```
 
 ## Environment variables
-
-Configured via `.env` (see `.env.example`):
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `APP_NAME` | Application name | `TradeLab` |
 | `APP_VERSION` | Semantic version | `0.1.0` |
-| `APP_DESCRIPTION` | Short description | TradeLab Quant Engine… |
-| `APP_ENV` | `development` / `staging` / `production` / `test` | `development` |
+| `APP_ENV` | Runtime environment | `development` |
 | `DEBUG` | Debug mode | `true` |
 | `API_V1_PREFIX` | Versioned API prefix | `/api/v1` |
-| `HOST` | Bind host (for reference) | `0.0.0.0` |
-| `PORT` | Bind port (for reference) | `8000` |
-| `DATABASE_URL` | SQLAlchemy URL | `sqlite:///./data/tradlab.db` |
-| `LOG_LEVEL` | `DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL` | `INFO` |
+| `METADATA_DATABASE_URL` | SQLite URL for metadata | `sqlite:///backend/data/metadata.db` |
+| `PARQUET_STORAGE_DIR` | OHLCV Parquet directory | `backend/data/ohlcv` |
+| `LOG_DIRECTORY` | Log file directory | `backend/data/logs` |
+| `DATABASE_URL` | App DB URL (health check) | `sqlite:///backend/data/metadata.db` |
+| `LOG_LEVEL` | Log level | `INFO` |
 | `LOG_FORMAT` | `console` or `json` | `console` |
-
-The SQLite data directory is created automatically on startup when needed.
 
 ## Running tests
 
 ```bash
-pytest
+python -m pytest
 ```
 
-Tests use an isolated temporary SQLite database and do not touch `./data/tradlab.db`.
+Tests use isolated temporary directories and do not modify committed storage paths.
 
 ## Project structure
 
 ```text
 TradeLab/
 ├── app/
-│   ├── api/
-│   │   ├── routes/
-│   │   │   ├── system.py      # GET /, GET /health
-│   │   │   └── v1_root.py     # GET /api/v1
-│   │   └── router.py
+│   ├── api/                   # HTTP routes (Phase A1)
 │   ├── core/
-│   │   ├── config.py          # Settings / env loading
-│   │   ├── exceptions.py      # Global error handlers
-│   │   └── logging.py         # Logging setup
-│   ├── db/
-│   │   ├── base.py            # SQLAlchemy DeclarativeBase
-│   │   └── session.py         # Engine, sessions, init
+│   │   ├── config.py          # Settings
+│   │   ├── database.py        # SQLAlchemy engine/session/base
+│   │   ├── storage_paths.py   # Directory initialization
+│   │   ├── exceptions.py
+│   │   └── logging.py
+│   ├── db/                    # Re-exports from core.database
+│   ├── market_data/           # Phase A2.1 storage layer
+│   │   ├── models/            # SQLAlchemy ORM
+│   │   ├── schemas/           # Pydantic contracts
+│   │   ├── repositories/      # SQLite + Parquet CRUD
+│   │   ├── validators/        # OHLCV validation
+│   │   ├── services/          # MarketDataGateway
+│   │   └── exceptions.py
 │   ├── middleware/
-│   │   └── request_logging.py
-│   ├── schemas/
-│   │   └── responses.py       # Standard response models
-│   ├── __init__.py
-│   └── main.py                # Application factory
+│   ├── schemas/               # API response models
+│   └── main.py
+├── backend/data/
+│   ├── ohlcv/                 # Parquet files (empty initially)
+│   └── logs/
 ├── tests/
-│   ├── conftest.py
-│   └── test_system.py
-├── docs/                      # Phase 0 architecture docs
-├── .env.example
-├── .gitignore
-├── pytest.ini
+│   ├── test_system.py
+│   └── market_data/           # Storage layer tests
+├── docs/                      # Architecture documentation
 ├── requirements.txt
 └── README.md
 ```
 
-## Architecture (A1)
+## Storage architecture
 
-Layered and separated:
+Future modules (ingestion, indicators, ML, backtesting, etc.) must use **`MarketDataGateway`** only:
 
-- **API routes** — HTTP only; no business logic
-- **Core** — configuration, logging, exceptions
-- **DB** — engine/session/base isolated from routes
-- **Schemas** — Pydantic response contracts
-- **Middleware** — cross-cutting request logging
+```python
+from app.core.database import get_session_factory
+from app.market_data.services import MarketDataGateway
 
-Dependency injection is used for `Settings` and the SQLAlchemy engine/session.
+session = get_session_factory()()
+gateway = MarketDataGateway(session)
+```
 
-## Out of scope (not in A1)
+Repositories and validators remain internal implementation details.
 
-Authentication, users, JWT, market data, indicators, ML, Monte Carlo, strategies, paper trading, AWS, Docker, and collaboration features are intentionally omitted and will arrive in later phases.
+## Out of scope (not in A2.1)
+
+yfinance, data download, bootstrap, incremental updates, API endpoints for market data, schedulers, caching, and placeholder ingestion code.

@@ -9,9 +9,10 @@ from fastapi import FastAPI
 
 from app.api.router import api_v1_router, system_router
 from app.core.config import Settings, get_settings
+from app.core.database import init_db, reset_db_state
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
-from app.db.session import init_db, reset_db_state
+from app.core.storage_paths import ensure_storage_directories
 from app.middleware.request_logging import RequestLoggingMiddleware
 
 logger = get_logger(__name__)
@@ -27,6 +28,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.app_version,
         settings.app_env,
     )
+    ensure_storage_directories(settings)
     init_db(settings)
     logger.info("Application startup complete")
     try:

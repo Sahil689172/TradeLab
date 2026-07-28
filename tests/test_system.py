@@ -5,8 +5,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect
 
-from app.db.base import Base
-from app.db.session import check_database_connection, get_engine, init_db, reset_db_state
+from app.core.database import Base, check_database_connection, get_engine, init_db, reset_db_state
 from app.main import create_app
 
 
@@ -88,9 +87,10 @@ def test_database_initialization(test_settings) -> None:
     assert check_database_connection(engine) is True
     assert get_engine() is engine
 
-    # Metadata create_all succeeds even with zero business models.
+    # Metadata tables for market data storage are created on init.
     inspector = inspect(engine)
-    assert isinstance(inspector.get_table_names(), list)
+    table_names = set(inspector.get_table_names())
+    assert table_names == {"company_metadata", "ingestion_state"}
     assert Base.metadata is not None
 
     reset_db_state()

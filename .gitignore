@@ -23,6 +23,13 @@ env/
 *.sqlite
 *.sqlite3
 data/
+backend/data/*.db
+
+# Keep storage directory structure
+!backend/data/ohlcv/
+!backend/data/ohlcv/.gitkeep
+!backend/data/logs/
+!backend/data/logs/.gitkeep
 
 # Pytest / coverage
 .pytest_cache/

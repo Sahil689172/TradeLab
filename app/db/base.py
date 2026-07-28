@@ -1,13 +1,5 @@
-"""SQLAlchemy declarative base for ORM models."""
+"""SQLAlchemy declarative base (re-exported from core.database)."""
 
-from sqlalchemy.orm import DeclarativeBase
+from app.core.database import Base
 
-
-class Base(DeclarativeBase):
-    """Base class for all SQLAlchemy ORM models.
-
-    Phase A1 defines no business models. Future modules will inherit from
-    this base when introducing domain tables.
-    """
-
-    pass
+__all__ = ["Base"]

@@ -1,6 +1,7 @@
 """Application configuration loaded from environment variables."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, field_validator
@@ -39,10 +40,24 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0", description="Bind host")
     port: int = Field(default=8000, ge=1, le=65535, description="Bind port")
 
-    # Database
+    # Market data storage (Phase A2.1)
+    metadata_database_url: str = Field(
+        default="sqlite:///backend/data/metadata.db",
+        description="SQLite URL for market metadata (company_metadata, ingestion_state)",
+    )
+    parquet_storage_dir: Path = Field(
+        default=Path("backend/data/ohlcv"),
+        description="Directory for per-symbol OHLCV Parquet files",
+    )
+    log_directory: Path = Field(
+        default=Path("backend/data/logs"),
+        description="Directory for application and storage logs",
+    )
+
+    # Application database (health checks; aligned with metadata DB by default)
     database_url: str = Field(
-        default="sqlite:///./data/tradlab.db",
-        description="SQLAlchemy database URL",
+        default="sqlite:///backend/data/metadata.db",
+        description="SQLAlchemy database URL used by the FastAPI app",
     )
 
     # Logging
@@ -77,6 +92,16 @@ class Settings(BaseSettings):
         """Return True when the configured database is SQLite."""
         return self.database_url.startswith("sqlite")
 
+    @property
+    def metadata_db_path(self) -> Path:
+        """Return the filesystem path to the metadata SQLite database file."""
+        return _sqlite_url_to_path(self.metadata_database_url)
+
+    @property
+    def data_root(self) -> Path:
+        """Return the root ``data`` directory containing metadata and ohlcv."""
+        return self.metadata_db_path.parent
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -91,3 +116,12 @@ def get_settings() -> Settings:
 def clear_settings_cache() -> None:
     """Clear the settings cache (useful in tests)."""
     get_settings.cache_clear()
+
+
+def _sqlite_url_to_path(database_url: str) -> Path:
+    """Convert a ``sqlite:///`` URL to a filesystem ``Path``."""
+    if not database_url.startswith("sqlite:///"):
+        msg = f"Expected sqlite URL, got: {database_url}"
+        raise ValueError(msg)
+    raw = database_url.removeprefix("sqlite:///")
+    return Path(raw)
