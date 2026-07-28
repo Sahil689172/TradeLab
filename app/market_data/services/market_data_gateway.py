@@ -25,6 +25,7 @@ from app.market_data.schemas.ingestion_state import IngestionState
 from app.market_data.services.bootstrap_engine import BootstrapEngine
 from app.market_data.services.incremental_update_engine import IncrementalUpdateEngine
 from app.market_data.services.metadata_sync_service import MetadataSyncService
+from app.market_data.utils.ohlcv_normalizer import normalize_ohlcv_frame
 from app.market_data.validators.ohlcv_validator import OHLCVValidator
 
 logger = get_logger(__name__)
@@ -90,8 +91,9 @@ class MarketDataGateway:
             RepositoryError: When Parquet write fails.
         """
         try:
-            self._validator.validate(data)
-            path = self._parquet_repo.write(symbol, data)
+            normalized = normalize_ohlcv_frame(data)
+            self._validator.validate(normalized)
+            path = self._parquet_repo.write(symbol, normalized)
             logger.info("Saved OHLCV history for %s", symbol)
             return path
         except (ValidationError, RepositoryError):

@@ -16,6 +16,7 @@ from app.market_data.providers.base_provider import MarketDataProvider
 from app.market_data.schemas.company_metadata import CompanyMetadata
 from app.market_data.schemas.ingestion_state import IngestionState
 from app.market_data.services.market_data_gateway import MarketDataGateway
+from app.market_data.utils.ohlcv_normalizer import normalize_ohlcv_frame
 
 
 @pytest.fixture()
@@ -66,7 +67,7 @@ def gateway(db_session: Session, storage_settings: Settings) -> MarketDataGatewa
 
 
 def make_ohlcv_dataframe(rows: int = 3) -> pd.DataFrame:
-    """Build a valid OHLCV DataFrame for tests."""
+    """Build a valid OHLCV DataFrame in canonical storage schema."""
     base = date(2024, 1, 1)
     records = []
     for index in range(rows):
@@ -79,10 +80,10 @@ def make_ohlcv_dataframe(rows: int = 3) -> pd.DataFrame:
                 "low": 95.0 + index,
                 "close": 102.0 + index,
                 "adj_close": 102.0 + index,
-                "volume": 1000.0 + index,
+                "volume": 1000 + index,
             }
         )
-    return pd.DataFrame(records)
+    return normalize_ohlcv_frame(pd.DataFrame(records))
 
 
 def make_company_metadata(symbol: str = "RELIANCE") -> CompanyMetadata:
@@ -125,9 +126,9 @@ class FakeProvider(MarketDataProvider):
     ) -> pd.DataFrame:
         frame = make_ohlcv_dataframe(rows=5)
         if start_date is not None:
-            frame = frame[frame["date"] >= start_date]
+            frame = frame[frame["date"] >= pd.Timestamp(start_date)]
         if end_date is not None:
-            frame = frame[frame["date"] < end_date]
+            frame = frame[frame["date"] < pd.Timestamp(end_date)]
         return frame.reset_index(drop=True)
 
     def download_metadata(self, symbol: str) -> CompanyMetadata:

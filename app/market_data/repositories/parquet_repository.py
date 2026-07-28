@@ -11,8 +11,8 @@ import pyarrow.parquet as pq
 from app.core.logging import get_logger
 from app.market_data.exceptions import RepositoryError
 from app.market_data.repositories.interfaces import ParquetRepository
+from app.market_data.utils.ohlcv_normalizer import normalize_ohlcv_frame
 from app.market_data.utils.symbols import parquet_basename
-from app.market_data.validators.ohlcv_validator import OHLCV_COLUMNS
 
 logger = get_logger(__name__)
 
@@ -33,7 +33,7 @@ class FileParquetRepository(ParquetRepository):
     def write(self, symbol: str, data: pd.DataFrame) -> Path:
         path = self._file_path(symbol)
         try:
-            frame = data[list(OHLCV_COLUMNS)].copy()
+            frame = normalize_ohlcv_frame(data)
             frame.to_parquet(path, engine="pyarrow", index=False)
             logger.info("Wrote Parquet file for %s (%d rows) -> %s", symbol, len(frame), path)
             return path
@@ -84,12 +84,6 @@ class FileParquetRepository(ParquetRepository):
             else:
                 combined = data.copy()
 
-            combined = (
-                combined[list(OHLCV_COLUMNS)]
-                .drop_duplicates(subset=["date"], keep="last")
-                .sort_values("date")
-                .reset_index(drop=True)
-            )
             return self.write(symbol, combined)
         except RepositoryError:
             raise

@@ -131,7 +131,7 @@ class YFinanceProvider(MarketDataProvider):
             logger.exception("Yahoo Finance metadata download failed for %s", symbol)
             raise ProviderError(f"Failed to download metadata for '{symbol}': {exc}") from exc
 
-        if not info or not isinstance(info, dict):
+        if info is None or not isinstance(info, dict):
             raise ProviderError(f"No metadata returned for '{symbol}'")
         return info
 

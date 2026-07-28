@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -9,6 +10,7 @@ import pytest
 
 from app.market_data.exceptions import RepositoryError
 from app.market_data.repositories.parquet_repository import FileParquetRepository
+from app.market_data.utils.ohlcv_normalizer import assert_ohlcv_schema
 from tests.market_data.conftest import make_ohlcv_dataframe
 
 
@@ -24,7 +26,32 @@ def test_parquet_write_and_read(storage_settings) -> None:
 
     loaded = repo.read("RELIANCE")
     assert len(loaded) == len(frame)
-    assert set(loaded.columns) == set(frame.columns)
+    assert list(loaded.columns) == list(frame.columns)
+    assert_ohlcv_schema(loaded)
+
+
+def test_parquet_write_normalizes_input_schema(storage_settings) -> None:
+    """Write coerces provider-style rows into canonical Parquet dtypes."""
+    repo = FileParquetRepository(storage_settings.parquet_storage_dir)
+    raw = pd.DataFrame(
+        {
+            "date": [date(2024, 1, 2), date(2024, 1, 1), date(2024, 1, 1)],
+            "open": [101.0, 100.0, 999.0],
+            "high": [106.0, 105.0, 999.0],
+            "low": [96.0, 95.0, 999.0],
+            "close": [103.0, 102.0, 999.0],
+            "adj_close": [103.0, 102.0, 999.0],
+            "volume": [1100.5, 1000.0, 888.0],
+        },
+    )
+
+    repo.write("TATASTEEL", raw)
+    loaded = repo.read("TATASTEEL")
+
+    assert len(loaded) == 2
+    assert loaded.iloc[0]["open"] == 999.0
+    assert loaded.iloc[1]["open"] == 101.0
+    assert_ohlcv_schema(loaded)
 
 
 def test_parquet_read_missing_raises(storage_settings) -> None:

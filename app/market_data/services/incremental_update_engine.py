@@ -12,6 +12,7 @@ from app.market_data.exceptions import RepositoryError
 from app.market_data.providers.base_provider import MarketDataProvider
 from app.market_data.repositories.interfaces import IngestionStateRepository, ParquetRepository
 from app.market_data.schemas.ingestion_state import IngestionState
+from app.market_data.utils.ohlcv_normalizer import normalize_ohlcv_frame
 from app.market_data.validators.ohlcv_validator import OHLCVValidator
 
 logger = get_logger(__name__)
@@ -98,11 +99,12 @@ class IncrementalUpdateEngine:
                 ingestion_state=stored,
                 message="No new rows returned by provider",
             )
-        self._validator.validate(history)
+        normalized_history = normalize_ohlcv_frame(history)
+        self._validator.validate(normalized_history)
 
         existing = self._parquet_repository.read(normalized_symbol)
         before_rows = len(existing)
-        self._parquet_repository.append(normalized_symbol, history)
+        self._parquet_repository.append(normalized_symbol, normalized_history)
         combined = self._parquet_repository.read(normalized_symbol)
         after_rows = len(combined)
         rows_added = after_rows - before_rows
@@ -121,13 +123,13 @@ class IncrementalUpdateEngine:
         logger.info(
             "Incremental update completed for %s (%d downloaded, %d added)",
             normalized_symbol,
-            len(history),
+            len(normalized_history),
             rows_added,
         )
         return UpdateResult(
             symbol=normalized_symbol,
             status="updated",
-            rows_downloaded=len(history),
+            rows_downloaded=len(normalized_history),
             rows_added=rows_added,
             ingestion_state=stored_state,
             message="Incremental update completed",

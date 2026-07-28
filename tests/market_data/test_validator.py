@@ -84,6 +84,16 @@ def test_validator_rejects_negative_volume() -> None:
         validator.validate(frame)
 
 
+def test_validator_rejects_invalid_dtypes() -> None:
+    """Non-canonical dtypes fail validation."""
+    frame = make_ohlcv_dataframe()
+    frame["date"] = frame["date"].astype(object)
+    validator = OHLCVValidator()
+
+    with pytest.raises(ValidationError, match="datetime64"):
+        validator.validate(frame)
+
+
 def test_validator_includes_details() -> None:
     """ValidationError exposes a details list."""
     validator = OHLCVValidator()

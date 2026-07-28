@@ -20,6 +20,16 @@ OHLCV_COLUMNS: tuple[str, ...] = (
     "volume",
 )
 
+OHLCV_DTYPES: dict[str, str] = {
+    "date": "datetime64[ns]",
+    "open": "float64",
+    "high": "float64",
+    "low": "float64",
+    "close": "float64",
+    "adj_close": "float64",
+    "volume": "int64",
+}
+
 
 class OHLCVValidator:
     """Validate historical OHLCV DataFrames before Parquet persistence."""
@@ -46,6 +56,7 @@ class OHLCVValidator:
             self._raise(errors)
 
         frame = data[list(OHLCV_COLUMNS)].copy()
+        self._check_dtypes(frame, errors)
         self._check_missing_values(frame, errors)
         self._check_duplicate_dates(frame, errors)
         self._check_price_rules(frame, errors)
@@ -61,6 +72,21 @@ class OHLCVValidator:
         """Validate a list of OHLCV Pydantic records."""
         frame = pd.DataFrame([record.model_dump() for record in records])
         self.validate(frame)
+
+    @staticmethod
+    def _check_dtypes(frame: pd.DataFrame, errors: list[str]) -> None:
+        for column, expected_dtype in OHLCV_DTYPES.items():
+            actual = frame[column].dtype
+            if column == "date":
+                if not pd.api.types.is_datetime64_any_dtype(actual):
+                    errors.append(
+                        f"Column 'date' must be datetime64[ns], got {actual}",
+                    )
+                continue
+            if str(actual) != expected_dtype:
+                errors.append(
+                    f"Column '{column}' must be {expected_dtype}, got {actual}",
+                )
 
     @staticmethod
     def _check_missing_values(frame: pd.DataFrame, errors: list[str]) -> None:

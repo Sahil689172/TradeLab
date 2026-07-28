@@ -17,6 +17,7 @@ from app.market_data.repositories.interfaces import (
 )
 from app.market_data.schemas.company_metadata import CompanyMetadata
 from app.market_data.schemas.ingestion_state import IngestionState
+from app.market_data.utils.ohlcv_normalizer import normalize_ohlcv_frame
 from app.market_data.validators.ohlcv_validator import OHLCVValidator
 
 logger = get_logger(__name__)
@@ -78,8 +79,9 @@ class BootstrapEngine:
             start_date=start_date,
             end_date=end_date,
         )
-        self._validator.validate(history)
-        self._parquet_repository.write(normalized_symbol, history)
+        normalized_history = normalize_ohlcv_frame(history)
+        self._validator.validate(normalized_history)
+        self._parquet_repository.write(normalized_symbol, normalized_history)
 
         metadata = self._provider.download_metadata(normalized_symbol)
         existing_metadata = self._metadata_repository.get(normalized_symbol)
@@ -91,11 +93,11 @@ class BootstrapEngine:
 
         state = IngestionState(
             symbol=normalized_symbol,
-            first_available_date=self._frame_date_min(history),
-            last_available_date=self._frame_date_max(history),
+            first_available_date=self._frame_date_min(normalized_history),
+            last_available_date=self._frame_date_max(normalized_history),
             last_fetch_timestamp=datetime.now(timezone.utc),
             last_fetch_status="success",
-            row_count=len(history),
+            row_count=len(normalized_history),
         )
         existing_state = self._ingestion_repository.get(normalized_symbol)
         stored_state = (
@@ -103,11 +105,11 @@ class BootstrapEngine:
             if existing_state is not None
             else self._ingestion_repository.save(state)
         )
-        logger.info("Bootstrap completed for %s with %d rows", normalized_symbol, len(history))
+        logger.info("Bootstrap completed for %s with %d rows", normalized_symbol, len(normalized_history))
         return BootstrapResult(
             symbol=normalized_symbol,
             status="bootstrapped",
-            rows_downloaded=len(history),
+            rows_downloaded=len(normalized_history),
             metadata=stored_metadata,
             ingestion_state=stored_state,
             message="Bootstrap completed",

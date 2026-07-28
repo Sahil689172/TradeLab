@@ -8,12 +8,19 @@ Run from the project root:
 Optional symbol override:
 
     python backend/scripts/bootstrap_test.py TCS.NS
+
+Force re-bootstrap (delete existing local data first):
+
+    python backend/scripts/bootstrap_test.py --force
+    python backend/scripts/bootstrap_test.py RELIANCE.NS --force
 """
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+
+import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -23,14 +30,22 @@ from app.core.config import get_settings
 from app.core.database import get_session_factory, init_db
 from app.core.storage_paths import ensure_storage_directories
 from app.market_data.services.market_data_gateway import MarketDataGateway
+from app.market_data.utils.ohlcv_normalizer import assert_ohlcv_schema
 from app.market_data.utils.symbols import parquet_basename
 
 DEFAULT_SYMBOL = "RELIANCE.NS"
 
 
+def _parse_args(argv: list[str]) -> tuple[str, bool]:
+    force = "--force" in argv
+    positional = [arg for arg in argv if arg != "--force"]
+    symbol = positional[0].strip().upper() if positional else DEFAULT_SYMBOL
+    return symbol, force
+
+
 def main() -> int:
     """Bootstrap one symbol using the real YFinanceProvider."""
-    symbol = sys.argv[1].strip().upper() if len(sys.argv) > 1 else DEFAULT_SYMBOL
+    symbol, force = _parse_args(sys.argv[1:])
     settings = get_settings()
 
     print("=" * 60)
@@ -47,6 +62,13 @@ def main() -> int:
     session = get_session_factory()()
     try:
         gateway = MarketDataGateway(session, settings=settings)
+        if force:
+            gateway.delete_history(symbol)
+            gateway.delete_metadata(symbol)
+            gateway.delete_ingestion_state(symbol)
+            print("Force mode: removed existing local history and SQLite rows.")
+            print()
+
         result = gateway.bootstrap_symbol(symbol)
 
         metadata = gateway.get_metadata(symbol)
@@ -81,6 +103,13 @@ def main() -> int:
 
         print(f"Parquet location:    {parquet_path.resolve()}")
         print(f"Parquet exists:      {parquet_path.exists()}")
+        if parquet_path.exists():
+            frame = pd.read_parquet(parquet_path)
+            print()
+            print("Parquet schema:")
+            print(frame.dtypes)
+            assert_ohlcv_schema(frame)
+            print("Parquet schema:      OK")
         print()
 
         sqlite_ok = metadata is not None and state is not None
