@@ -25,6 +25,12 @@ from app.market_data.schemas.ingestion_state import IngestionState
 from app.market_data.services.bootstrap_engine import BootstrapEngine
 from app.market_data.services.incremental_update_engine import IncrementalUpdateEngine
 from app.market_data.services.metadata_sync_service import MetadataSyncService
+from app.market_data.services.universe_bootstrap_engine import (
+    ProgressCallback,
+    UniverseBootstrapEngine,
+    UniverseBootstrapSummary,
+)
+from app.market_data.universe import Nifty500Universe
 from app.market_data.utils.ohlcv_normalizer import normalize_ohlcv_frame
 from app.market_data.validators.ohlcv_validator import OHLCVValidator
 
@@ -48,6 +54,7 @@ class MarketDataGateway:
         provider: MarketDataProvider | None = None,
         validator: OHLCVValidator | None = None,
         settings: Settings | None = None,
+        universe_bootstrap_engine: UniverseBootstrapEngine | None = None,
     ) -> None:
         cfg = settings or get_settings()
         self._settings = cfg
@@ -74,6 +81,10 @@ class MarketDataGateway:
         self._metadata_sync_service = MetadataSyncService(
             self._provider,
             self._metadata_repo,
+        )
+        self._universe_bootstrap_engine = universe_bootstrap_engine or UniverseBootstrapEngine(
+            self._bootstrap_engine,
+            cfg,
         )
 
     def save_history(self, symbol: str, data: pd.DataFrame) -> Path:
@@ -172,6 +183,22 @@ class MarketDataGateway:
     def bootstrap_all(self, symbols: list[str]) -> list[IngestionOperationResult]:
         """Bootstrap multiple symbols in order."""
         return [self.bootstrap_symbol(symbol) for symbol in symbols]
+
+    def bootstrap_universe(
+        self,
+        universe: Nifty500Universe | None = None,
+        *,
+        progress_callback: ProgressCallback | None = None,
+    ) -> UniverseBootstrapSummary:
+        """Bootstrap all symbols in a universe with retry and resume support."""
+        nifty_universe = universe or Nifty500Universe()
+        report_path = Path(self._settings.log_directory) / "universe_validation_report.json"
+        report = nifty_universe.validate(report_path)
+        return self._universe_bootstrap_engine.bootstrap_symbols(
+            report.valid_symbols,
+            universe_name="NIFTY500",
+            progress_callback=progress_callback,
+        )
 
     def update_symbol(self, symbol: str) -> IngestionOperationResult:
         """Incrementally update one locally stored symbol."""

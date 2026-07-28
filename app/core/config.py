@@ -73,6 +73,24 @@ class Settings(BaseSettings):
         le=300,
         description="Timeout for Yahoo Finance provider requests",
     )
+    bootstrap_rate_limit_seconds: float = Field(
+        default=0.75,
+        ge=0.0,
+        le=10.0,
+        description="Delay between Yahoo Finance download requests during bulk bootstrap",
+    )
+    bootstrap_max_retries: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Maximum retry attempts per symbol during bulk bootstrap",
+    )
+    bootstrap_retry_base_delay_seconds: float = Field(
+        default=1.0,
+        ge=0.1,
+        le=60.0,
+        description="Base delay in seconds for exponential backoff between bootstrap retries",
+    )
 
     # Logging
     log_level: str = Field(default="INFO", description="Root log level")
