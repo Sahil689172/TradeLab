@@ -15,6 +15,16 @@ from app.market_data.schemas.company_metadata import CompanyMetadata
 
 logger = get_logger(__name__)
 
+OHLCV_OUTPUT_COLUMNS = (
+    "date",
+    "open",
+    "high",
+    "low",
+    "close",
+    "adj_close",
+    "volume",
+)
+
 
 class YFinanceProvider(MarketDataProvider):
     """Download OHLCV history and metadata from Yahoo Finance."""
@@ -49,6 +59,8 @@ class YFinanceProvider(MarketDataProvider):
             raise ProviderError(f"No historical data returned for '{symbol}'")
 
         frame = history.reset_index().copy()
+        if isinstance(frame.columns, pd.MultiIndex):
+            frame.columns = frame.columns.get_level_values(0)
         date_column = "Date" if "Date" in frame.columns else frame.columns[0]
         frame["date"] = pd.to_datetime(frame[date_column]).dt.date
         frame = frame.rename(
@@ -61,29 +73,45 @@ class YFinanceProvider(MarketDataProvider):
                 "Volume": "volume",
             },
         )
-        required = ["date", "open", "high", "low", "close", "adj_close", "volume"]
-        missing = [column for column in required if column not in frame.columns]
+
+        if "adj_close" not in frame.columns:
+            frame["adj_close"] = frame["close"]
+
+        missing = [column for column in OHLCV_OUTPUT_COLUMNS if column not in frame.columns]
         if missing:
             raise ProviderError(
                 f"Corrupted historical response for '{symbol}'; missing columns: {missing}",
             )
-        clean = frame[required].sort_values("date").reset_index(drop=True)
+
+        clean = frame[list(OHLCV_OUTPUT_COLUMNS)].copy()
+        clean["adj_close"] = clean["adj_close"].fillna(clean["close"])
+        clean["volume"] = clean["volume"].fillna(0)
+        clean = clean.dropna(subset=["open", "high", "low", "close"])
+        clean = clean.sort_values("date").reset_index(drop=True)
+
+        if clean.empty:
+            raise ProviderError(f"No usable historical data returned for '{symbol}'")
+
         logger.info("Downloaded %d rows of history for %s", len(clean), symbol)
         return clean
 
     def download_metadata(self, symbol: str) -> CompanyMetadata:
         """Return normalized company metadata for ``symbol``."""
         info = self.download_company_info(symbol)
+        cleaned_symbol = symbol.strip().upper()
         name = self._pick_string(info, "longName", "shortName", "displayName")
         exchange = self._pick_string(info, "exchange", "fullExchangeName")
         currency = self._pick_string(info, "currency") or "INR"
-        if not name or not exchange:
-            raise ProviderError(f"Incomplete metadata returned for '{symbol}'")
+
+        if not name:
+            name = cleaned_symbol.split(".")[0]
+        if not exchange:
+            exchange = "NSE" if cleaned_symbol.endswith(".NS") else "UNKNOWN"
 
         market_cap = info.get("marketCap")
         market_cap_value = float(market_cap) if market_cap is not None else None
         return CompanyMetadata(
-            symbol=symbol.strip().upper(),
+            symbol=cleaned_symbol,
             company_name=name,
             sector=self._pick_string(info, "sector"),
             industry=self._pick_string(info, "industry"),
@@ -103,7 +131,7 @@ class YFinanceProvider(MarketDataProvider):
             logger.exception("Yahoo Finance metadata download failed for %s", symbol)
             raise ProviderError(f"Failed to download metadata for '{symbol}': {exc}") from exc
 
-        if not info:
+        if not info or not isinstance(info, dict):
             raise ProviderError(f"No metadata returned for '{symbol}'")
         return info
 

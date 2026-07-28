@@ -90,6 +90,18 @@ def test_gateway_bootstrap_symbol(gateway) -> None:
     assert gateway.history_exists("RELIANCE") is True
 
 
+def test_gateway_bootstrap_nse_symbol_uses_base_parquet_file(gateway, storage_settings) -> None:
+    """Bootstrap with RELIANCE.NS stores RELIANCE.parquet and SQLite keys."""
+    result = gateway.bootstrap_symbol("RELIANCE.NS")
+    assert result.status == "bootstrapped"
+    assert result.metadata is not None
+    assert result.metadata.symbol == "RELIANCE.NS"
+    assert result.ingestion_state is not None
+    assert result.ingestion_state.symbol == "RELIANCE.NS"
+    assert (storage_settings.parquet_storage_dir / "RELIANCE.parquet").exists()
+    assert gateway.history_exists("RELIANCE.NS") is True
+
+
 def test_gateway_bootstrap_skips_existing_symbol(gateway) -> None:
     """Bootstrap does nothing when history already exists locally."""
     first = gateway.bootstrap_symbol("TCS")

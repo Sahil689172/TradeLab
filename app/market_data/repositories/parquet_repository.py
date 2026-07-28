@@ -11,6 +11,7 @@ import pyarrow.parquet as pq
 from app.core.logging import get_logger
 from app.market_data.exceptions import RepositoryError
 from app.market_data.repositories.interfaces import ParquetRepository
+from app.market_data.utils.symbols import parquet_basename
 from app.market_data.validators.ohlcv_validator import OHLCV_COLUMNS
 
 logger = get_logger(__name__)
@@ -24,10 +25,10 @@ class FileParquetRepository(ParquetRepository):
         self._storage_dir.mkdir(parents=True, exist_ok=True)
 
     def _file_path(self, symbol: str) -> Path:
-        safe_symbol = symbol.strip().upper()
-        if not safe_symbol:
+        basename = parquet_basename(symbol)
+        if not basename:
             raise RepositoryError("Symbol must not be empty")
-        return self._storage_dir / f"{safe_symbol}.parquet"
+        return self._storage_dir / f"{basename}.parquet"
 
     def write(self, symbol: str, data: pd.DataFrame) -> Path:
         path = self._file_path(symbol)

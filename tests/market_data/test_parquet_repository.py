@@ -66,3 +66,13 @@ def test_parquet_append_prevents_duplicate_dates(storage_settings) -> None:
     combined = repo.read("INFY")
 
     assert combined["date"].duplicated().sum() == 0
+
+
+def test_parquet_nse_symbol_maps_to_base_ticker(storage_settings) -> None:
+    """NSE Yahoo symbols are stored as base-ticker Parquet files."""
+    repo = FileParquetRepository(storage_settings.parquet_storage_dir)
+    path = repo.write("RELIANCE.NS", make_ohlcv_dataframe())
+
+    assert path.name == "RELIANCE.parquet"
+    assert repo.exists("RELIANCE.NS") is True
+    assert len(repo.read("RELIANCE.NS")) == 3
