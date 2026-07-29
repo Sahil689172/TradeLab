@@ -96,8 +96,16 @@ class YFinanceProvider(MarketDataProvider):
         return clean
 
     def download_metadata(self, symbol: str) -> CompanyMetadata:
-        """Return normalized company metadata for ``symbol``."""
-        info = self.download_company_info(symbol)
+        """Return normalized metadata, falling back to partial identity fields."""
+        try:
+            info = self.download_company_info(symbol)
+        except ProviderError as exc:
+            logger.warning(
+                "Using partial metadata for %s because Yahoo metadata failed: %s",
+                symbol,
+                exc,
+            )
+            info = {}
         cleaned_symbol = symbol.strip().upper()
         name = self._pick_string(info, "longName", "shortName", "displayName")
         exchange = self._pick_string(info, "exchange", "fullExchangeName")

@@ -25,6 +25,11 @@ env/
 data/
 backend/data/*.db
 
+# Version-controlled market universe data
+!app/market_data/universe/data/
+!app/market_data/universe/data/ind_nifty500list.csv
+!app/market_data/universe/data/symbol_mapping.json
+
 # Keep storage directory structure
 !backend/data/ohlcv/
 !backend/data/ohlcv/.gitkeep

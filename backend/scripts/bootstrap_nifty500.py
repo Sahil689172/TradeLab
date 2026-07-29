@@ -60,10 +60,16 @@ def main() -> int:
         print()
         print(format_summary(summary))
         if report is not None:
-            print(f"Validated symbols:   {len(report.valid_symbols)}")
-            print(f"Renamed symbols:    {len(report.renamed_symbols)}")
-            print(f"Delisted symbols:   {len(report.delisted_symbols)}")
-            print(f"Invalid symbols:    {len(report.invalid_symbols)}")
+            print("Validation Statistics")
+            print("-" * 60)
+            print(f"Universe size:       {report.universe_size}")
+            print(f"Mapped symbols:      {len(report.renamed_symbols)}")
+            print(f"Valid symbols:       {len(report.valid_symbols)}")
+            print(f"Downloaded:          {summary.downloaded}")
+            print(f"Skipped:             {summary.skipped}")
+            print(f"Delisted:            {len(report.delisted_symbols)}")
+            print(f"Network failures:    {len(report.network_errors)}")
+            print(f"Invalid format:      {len(report.invalid_format_symbols)}")
             print()
 
         if summary.failed > 0:

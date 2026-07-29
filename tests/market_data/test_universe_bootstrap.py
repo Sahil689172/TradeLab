@@ -27,25 +27,23 @@ FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 TEST_UNIVERSE_FILE = FIXTURES_DIR / "nifty500_test.csv"
 
 
-def _quote_validator(symbol: str) -> bool:
-    return symbol in {
+def _downloader(symbol: str) -> pd.DataFrame:
+    valid_symbols = {
         "RELIANCE.NS",
         "TCS.NS",
         "INFY.NS",
         "HDFCBANK.NS",
         "SBIN.NS",
     }
-
-
-def _search_resolver(company_name: str, fallback_symbol: str) -> str | None:
-    return None
+    if symbol in valid_symbols:
+        return pd.DataFrame({"Close": [100.0]})
+    return pd.DataFrame()
 
 
 def _make_universe() -> Nifty500Universe:
     return Nifty500Universe(
         TEST_UNIVERSE_FILE,
-        quote_validator=_quote_validator,
-        search_resolver=_search_resolver,
+        downloader=_downloader,
         validation_delay_seconds=0.0,
     )
 

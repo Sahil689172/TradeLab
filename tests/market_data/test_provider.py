@@ -113,3 +113,24 @@ def test_yfinance_provider_metadata_fallback_for_nse_symbol(monkeypatch) -> None
     assert metadata.company_name == "RELIANCE"
     assert metadata.exchange == "NSE"
     assert metadata.currency == "INR"
+
+
+def test_metadata_failure_returns_partial_metadata(monkeypatch) -> None:
+    """Metadata failure does not invalidate a confirmed price ticker."""
+
+    class FailingMetadataTicker:
+        @property
+        def info(self):
+            raise TimeoutError("metadata endpoint timed out")
+
+    monkeypatch.setattr(
+        "app.market_data.providers.yfinance_provider.yf.Ticker",
+        lambda _: FailingMetadataTicker(),
+    )
+
+    metadata = YFinanceProvider().download_metadata("TATAMOTORS.NS")
+
+    assert metadata.symbol == "TATAMOTORS.NS"
+    assert metadata.company_name == "TATAMOTORS"
+    assert metadata.exchange == "NSE"
+    assert metadata.currency == "INR"

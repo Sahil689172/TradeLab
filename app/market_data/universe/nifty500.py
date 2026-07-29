@@ -1,281 +1,333 @@
-"""NIFTY 500 index universe provider and Yahoo ticker validator."""
+"""NIFTY 500 universe loading and staged Yahoo Finance validation."""
 
 from __future__ import annotations
 
 import csv
 import json
+import re
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
+from urllib.error import HTTPError, URLError
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+import pandas as pd
 import yfinance as yf
+from yfinance import shared as yf_shared
+from yfinance.exceptions import YFException
 
 from app.core.logging import get_logger
+from app.market_data.universe.symbol_mapper import (
+    SymbolDiscoveryNetworkError,
+    SymbolMapper,
+)
 
 logger = get_logger(__name__)
 
 DEFAULT_SYMBOLS_FILE = Path(__file__).resolve().parent / "data" / "ind_nifty500list.csv"
-YAHOO_SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
 NSE_SUFFIX = ".NS"
 DEFAULT_VALIDATION_DELAY_SECONDS = 0.25
+VALID_SYMBOL_PATTERN = re.compile(r"^[A-Z0-9&-]+$")
+
+ValidationStatus = Literal[
+    "VALID",
+    "RENAMED",
+    "DELISTED",
+    "NETWORK_ERROR",
+    "INVALID_FORMAT",
+]
+DownloadFn = Callable[[str], pd.DataFrame]
 
 
 @dataclass(slots=True)
 class UniverseCandidate:
-    """A raw NIFTY 500 constituent before Yahoo validation."""
+    """One raw local-universe constituent."""
 
     company_name: str
     symbol: str
-    yahoo_symbol: str
 
 
 @dataclass(slots=True)
-class UniverseValidationItem:
-    """One validated, renamed, delisted, or invalid universe entry."""
+class UniverseValidationEntry:
+    """Final, mutually exclusive classification for one company."""
 
-    symbol: str
-    yahoo_symbol: str | None
-    company_name: str
+    original_symbol: str
+    mapped_symbol: str | None
+    validation_ticker: str | None
+    status: ValidationStatus
     reason: str
 
 
 @dataclass(slots=True)
 class UniverseValidationReport:
-    """Structured result of validating a NIFTY 500 universe."""
+    """Complete validation report for all local-universe companies."""
 
-    total_candidates: int
-    valid_symbols: list[str]
-    renamed_symbols: list[UniverseValidationItem]
-    delisted_symbols: list[UniverseValidationItem]
-    invalid_symbols: list[UniverseValidationItem]
+    universe_size: int
+    entries: list[UniverseValidationEntry]
+
+    @property
+    def valid_symbols(self) -> list[str]:
+        """Yahoo tickers eligible for bootstrap."""
+        return list(
+            dict.fromkeys(
+                entry.validation_ticker
+                for entry in self.entries
+                if entry.status in {"VALID", "RENAMED"} and entry.validation_ticker
+            ),
+        )
+
+    @property
+    def valid_entries(self) -> list[UniverseValidationEntry]:
+        return [entry for entry in self.entries if entry.status == "VALID"]
+
+    @property
+    def renamed_symbols(self) -> list[UniverseValidationEntry]:
+        return [entry for entry in self.entries if entry.status == "RENAMED"]
+
+    @property
+    def delisted_symbols(self) -> list[UniverseValidationEntry]:
+        return [entry for entry in self.entries if entry.status == "DELISTED"]
+
+    @property
+    def network_errors(self) -> list[UniverseValidationEntry]:
+        return [entry for entry in self.entries if entry.status == "NETWORK_ERROR"]
+
+    @property
+    def invalid_format_symbols(self) -> list[UniverseValidationEntry]:
+        return [entry for entry in self.entries if entry.status == "INVALID_FORMAT"]
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-serializable report."""
+        """Return a JSON-serializable report with summary statistics."""
         return {
-            "total_candidates": self.total_candidates,
-            "valid_symbols": list(self.valid_symbols),
-            "renamed_symbols": [asdict(item) for item in self.renamed_symbols],
-            "delisted_symbols": [asdict(item) for item in self.delisted_symbols],
-            "invalid_symbols": [asdict(item) for item in self.invalid_symbols],
+            "statistics": {
+                "universe_size": self.universe_size,
+                "mapped_symbols": len(self.renamed_symbols),
+                "valid_symbols": len(self.valid_symbols),
+                "delisted": len(self.delisted_symbols),
+                "network_errors": len(self.network_errors),
+                "invalid_format": len(self.invalid_format_symbols),
+            },
+            "entries": [asdict(entry) for entry in self.entries],
         }
 
 
-class Nifty500Universe:
-    """Load the local NIFTY 500 CSV and validate Yahoo Finance tickers.
+class UniverseNetworkError(Exception):
+    """Raised when Yahoo validation cannot complete due to connectivity."""
 
-    The constituent list is read from a version-controlled CSV under
-    ``app/market_data/universe/data/``. No remote NSE download is performed.
-    """
+
+class Nifty500Universe:
+    """Load the local NIFTY 500 CSV and validate it in three stages."""
 
     def __init__(
         self,
         symbols_file: Path | str | None = None,
         *,
-        quote_validator: Callable[[str], bool] | None = None,
-        search_resolver: Callable[[str, str], str | None] | None = None,
+        symbol_mapper: SymbolMapper | None = None,
+        downloader: DownloadFn | None = None,
         validation_delay_seconds: float = DEFAULT_VALIDATION_DELAY_SECONDS,
         sleep_fn: Callable[[float], None] | None = None,
     ) -> None:
-        self._symbols_file = Path(symbols_file) if symbols_file is not None else DEFAULT_SYMBOLS_FILE
-        self._quote_validator = quote_validator or self._default_quote_validator
-        self._search_resolver = search_resolver or self._default_search_resolver
+        self._symbols_file = Path(symbols_file) if symbols_file else DEFAULT_SYMBOLS_FILE
+        self._symbol_mapper = symbol_mapper or SymbolMapper()
+        self._downloader = downloader or self._download_five_day_history
         self._validation_delay_seconds = max(0.0, validation_delay_seconds)
         self._sleep = sleep_fn or time.sleep
         self._candidates = self._load_candidates()
-        self._validated_symbols: list[str] | None = None
         self._validation_report: UniverseValidationReport | None = None
 
     def get_symbols(self) -> list[str]:
-        """Return validated symbols, or raw CSV symbols when not yet validated."""
-        if self._validated_symbols is not None:
-            return list(self._validated_symbols)
-        return [candidate.yahoo_symbol for candidate in self._candidates]
+        """Return validated tickers, or mapped local tickers before validation."""
+        if self._validation_report is not None:
+            return self._validation_report.valid_symbols
+        symbols = [
+            self._to_yahoo_symbol(self._symbol_mapper.map_symbol(candidate.symbol))
+            for candidate in self._candidates
+            if self._is_valid_format(candidate.symbol)
+        ]
+        return list(dict.fromkeys(symbols))
 
     def get_count(self) -> int:
-        """Return the number of currently selected symbols."""
-        return len(self.get_symbols())
+        """Return the source universe size, which remains stable after validation."""
+        return len(self._candidates)
 
     def validate(self, report_path: Path | str | None = None) -> UniverseValidationReport:
-        """Validate Yahoo tickers and optionally write a JSON report.
-
-        Invalid, delisted, and permanently unavailable symbols are excluded from
-        ``valid_symbols``. Renamed symbols are rewritten to the current Yahoo ticker.
-        Bootstrap continues with every validated symbol.
-        """
-        valid_symbols: list[str] = []
-        renamed_symbols: list[UniverseValidationItem] = []
-        delisted_symbols: list[UniverseValidationItem] = []
-        invalid_symbols: list[UniverseValidationItem] = []
+        """Run mapping, five-day OHLCV validation, and final classification."""
+        entries: list[UniverseValidationEntry] = []
+        total = len(self._candidates)
 
         for index, candidate in enumerate(self._candidates, start=1):
             logger.info(
                 "Validating universe symbol %s (%d/%d)",
-                candidate.yahoo_symbol,
+                candidate.symbol,
                 index,
-                len(self._candidates),
+                total,
             )
-            try:
-                if self._quote_validator(candidate.yahoo_symbol):
-                    valid_symbols.append(candidate.yahoo_symbol)
-                else:
-                    replacement = self._search_resolver(
-                        candidate.company_name,
-                        candidate.yahoo_symbol,
-                    )
-                    if replacement and replacement != candidate.yahoo_symbol:
-                        if self._quote_validator(replacement):
-                            valid_symbols.append(replacement)
-                            renamed_symbols.append(
-                                UniverseValidationItem(
-                                    symbol=candidate.symbol,
-                                    yahoo_symbol=replacement,
-                                    company_name=candidate.company_name,
-                                    reason="Renamed or symbol changed on Yahoo Finance",
-                                ),
-                            )
-                        else:
-                            delisted_symbols.append(
-                                UniverseValidationItem(
-                                    symbol=candidate.symbol,
-                                    yahoo_symbol=candidate.yahoo_symbol,
-                                    company_name=candidate.company_name,
-                                    reason="Unavailable or delisted on Yahoo Finance",
-                                ),
-                            )
-                    else:
-                        delisted_symbols.append(
-                            UniverseValidationItem(
-                                symbol=candidate.symbol,
-                                yahoo_symbol=candidate.yahoo_symbol,
-                                company_name=candidate.company_name,
-                                reason="Unavailable or delisted on Yahoo Finance",
-                            ),
-                        )
-            except Exception as exc:
-                invalid_symbols.append(
-                    UniverseValidationItem(
-                        symbol=candidate.symbol,
-                        yahoo_symbol=candidate.yahoo_symbol,
-                        company_name=candidate.company_name,
-                        reason=str(exc),
-                    ),
-                )
-
-            if self._validation_delay_seconds > 0 and index < len(self._candidates):
+            entries.append(self._validate_candidate(candidate))
+            if self._validation_delay_seconds > 0 and index < total:
                 self._sleep(self._validation_delay_seconds)
 
-        report = UniverseValidationReport(
-            total_candidates=len(self._candidates),
-            valid_symbols=list(dict.fromkeys(valid_symbols)),
-            renamed_symbols=renamed_symbols,
-            delisted_symbols=delisted_symbols,
-            invalid_symbols=invalid_symbols,
-        )
-        self._validated_symbols = report.valid_symbols
+        report = UniverseValidationReport(universe_size=total, entries=entries)
         self._validation_report = report
-
         if report_path is not None:
             target = Path(report_path)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
 
         logger.info(
-            "Validated NIFTY 500 universe from %s: valid=%d renamed=%d delisted=%d invalid=%d",
-            self._symbols_file,
-            len(report.valid_symbols),
+            "Universe validation completed: size=%d mapped=%d valid=%d "
+            "delisted=%d network=%d invalid_format=%d",
+            report.universe_size,
             len(report.renamed_symbols),
+            len(report.valid_symbols),
             len(report.delisted_symbols),
-            len(report.invalid_symbols),
+            len(report.network_errors),
+            len(report.invalid_format_symbols),
         )
         return report
 
     def get_validation_report(self) -> UniverseValidationReport | None:
-        """Return the last validation report, if one exists."""
+        """Return the most recent report."""
         return self._validation_report
+
+    def _validate_candidate(self, candidate: UniverseCandidate) -> UniverseValidationEntry:
+        original = candidate.symbol
+        if not self._is_valid_format(original):
+            return UniverseValidationEntry(
+                original_symbol=original,
+                mapped_symbol=None,
+                validation_ticker=None,
+                status="INVALID_FORMAT",
+                reason="Symbol contains unsupported characters",
+            )
+
+        mapped = self._symbol_mapper.map_symbol(original)
+        ticker = self._to_yahoo_symbol(mapped)
+        try:
+            if self._has_history(ticker):
+                status: ValidationStatus = "RENAMED" if mapped != original else "VALID"
+                reason = (
+                    "Validated mapped corporate-action ticker"
+                    if status == "RENAMED"
+                    else "Five-day OHLCV history is available"
+                )
+                return UniverseValidationEntry(original, mapped, ticker, status, reason)
+
+            discovered = self._symbol_mapper.discover_symbol(original, candidate.company_name)
+            if discovered:
+                discovered_ticker = self._to_yahoo_symbol(discovered)
+                if self._has_history(discovered_ticker):
+                    return UniverseValidationEntry(
+                        original,
+                        discovered,
+                        discovered_ticker,
+                        "RENAMED",
+                        "Automatically discovered and validated replacement ticker",
+                    )
+
+            return UniverseValidationEntry(
+                original,
+                mapped,
+                ticker,
+                "DELISTED",
+                "No five-day OHLCV history for mapped or discovered ticker",
+            )
+        except (UniverseNetworkError, SymbolDiscoveryNetworkError) as exc:
+            return UniverseValidationEntry(
+                original,
+                mapped,
+                ticker,
+                "NETWORK_ERROR",
+                str(exc),
+            )
+
+    def _has_history(self, ticker: str) -> bool:
+        try:
+            frame = self._downloader(ticker)
+        except UniverseNetworkError:
+            raise
+        except Exception as exc:
+            raise UniverseNetworkError(
+                f"Unexpected validation error for {ticker}: {type(exc).__name__}: {exc}",
+            ) from exc
+        if frame is None:
+            logger.info("Ticker %s returned None instead of a DataFrame", ticker)
+            return False
+        valid = len(frame.index) > 0
+        logger.info("Ticker %s validation result: %s", ticker, valid)
+        return valid
 
     def _load_candidates(self) -> list[UniverseCandidate]:
         if not self._symbols_file.exists():
-            msg = (
-                f"NIFTY 500 symbols file not found: {self._symbols_file}. "
-                "The universe CSV must be version-controlled under "
-                "app/market_data/universe/data/."
+            raise FileNotFoundError(
+                f"NIFTY 500 symbols file not found: {self._symbols_file}",
             )
-            raise FileNotFoundError(msg)
 
         candidates: list[UniverseCandidate] = []
         seen: set[str] = set()
-
         with self._symbols_file.open(newline="", encoding="utf-8") as handle:
-            reader = csv.DictReader(handle)
-            for row in reader:
-                raw_symbol = (row.get("Symbol") or "").strip().upper()
+            for row in csv.DictReader(handle):
+                symbol = (row.get("Symbol") or "").strip().upper()
                 company_name = (row.get("Company Name") or "").strip()
                 series = (row.get("Series") or "EQ").strip().upper()
-                if not raw_symbol or not company_name or series != "EQ":
+                if not symbol or not company_name or series != "EQ" or symbol in seen:
                     continue
-                yahoo_symbol = (
-                    raw_symbol if raw_symbol.endswith(NSE_SUFFIX) else f"{raw_symbol}{NSE_SUFFIX}"
-                )
-                if yahoo_symbol in seen:
-                    continue
-                seen.add(yahoo_symbol)
-                candidates.append(
-                    UniverseCandidate(
-                        company_name=company_name,
-                        symbol=raw_symbol,
-                        yahoo_symbol=yahoo_symbol,
-                    ),
-                )
+                seen.add(symbol)
+                candidates.append(UniverseCandidate(company_name, symbol))
 
         if not candidates:
-            msg = f"No EQ symbols found in NIFTY 500 file: {self._symbols_file}"
-            raise ValueError(msg)
-
-        logger.info(
-            "Loaded %d NIFTY 500 candidates from local file %s",
-            len(candidates),
-            self._symbols_file,
-        )
+            raise ValueError(f"No EQ symbols found in NIFTY 500 file: {self._symbols_file}")
+        logger.info("Loaded %d companies from local universe %s", len(candidates), self._symbols_file)
         return candidates
 
     @staticmethod
-    def _default_quote_validator(yahoo_symbol: str) -> bool:
-        """Return True when Yahoo Finance has recent OHLCV for the ticker."""
-        ticker = yf.Ticker(yahoo_symbol)
-        history = ticker.history(period="5d", auto_adjust=False, actions=False)
-        return history is not None and not history.empty
+    def _download_five_day_history(ticker: str) -> pd.DataFrame:
+        """Validate strictly through Yahoo's five-day price download."""
+        logger.info("Ticker: %s", ticker)
+        yf_shared._ERRORS.pop(ticker, None)
+        try:
+            frame = yf.download(
+                ticker,
+                period="5d",
+                progress=False,
+                auto_adjust=False,
+                threads=False,
+            )
+        except HTTPError as exc:
+            logger.exception("HTTPError validating %s", ticker)
+            raise UniverseNetworkError(f"HTTPError for {ticker}: {exc}") from exc
+        except TimeoutError as exc:
+            logger.exception("Timeout validating %s", ticker)
+            raise UniverseNetworkError(f"Timeout for {ticker}: {exc}") from exc
+        except (ConnectionError, URLError) as exc:
+            logger.exception("NetworkError validating %s", ticker)
+            raise UniverseNetworkError(f"NetworkError for {ticker}: {exc}") from exc
+        except YFException as exc:
+            logger.exception("YFinanceError validating %s", ticker)
+            raise UniverseNetworkError(f"YFinanceError for {ticker}: {exc}") from exc
+        except Exception as exc:
+            logger.exception("Unexpected Yahoo error validating %s", ticker)
+            raise UniverseNetworkError(
+                f"Unexpected Yahoo error for {ticker}: {type(exc).__name__}: {exc}",
+            ) from exc
+
+        logger.info("Ticker %s DataFrame type: %s", ticker, type(frame))
+        logger.info("Ticker %s DataFrame shape: %s", ticker, frame.shape)
+        logger.info("Ticker %s DataFrame columns: %s", ticker, list(frame.columns))
+        logger.info("Ticker %s DataFrame empty: %s", ticker, frame.empty)
+        logger.info("Ticker %s downloaded rows: %d", ticker, len(frame))
+        swallowed_error = yf_shared._ERRORS.get(ticker)
+        if len(frame.index) == 0 and swallowed_error:
+            raise UniverseNetworkError(
+                f"YFinanceError for {ticker}: {swallowed_error}",
+            )
+        return frame
 
     @staticmethod
-    def _default_search_resolver(company_name: str, fallback_symbol: str) -> str | None:
-        """Find a current NSE Yahoo ticker for a renamed company via Yahoo search."""
-        params = urllib.parse.urlencode(
-            {"q": company_name, "quotesCount": 10, "newsCount": 0},
-        )
-        request = urllib.request.Request(
-            f"{YAHOO_SEARCH_URL}?{params}",
-            headers={"User-Agent": "TradeLab/0.1"},
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
-            return None
+    def _is_valid_format(symbol: str) -> bool:
+        return bool(VALID_SYMBOL_PATTERN.fullmatch(symbol))
 
-        quotes = payload.get("quotes", [])
-        for quote in quotes:
-            quote_symbol = str(quote.get("symbol") or "").upper()
-            quote_type = str(quote.get("quoteType") or "").upper()
-            if not quote_symbol.endswith(NSE_SUFFIX):
-                continue
-            if quote_type and quote_type not in {"EQUITY", ""}:
-                continue
-            if quote_symbol == fallback_symbol.upper():
-                continue
-            return quote_symbol
-
-        return None
+    @staticmethod
+    def _to_yahoo_symbol(symbol: str) -> str:
+        normalized = SymbolMapper.normalize_symbol(symbol)
+        return f"{normalized}{NSE_SUFFIX}"
