@@ -106,7 +106,7 @@ class IndicatorAdapter:
         """Return a typed indicator object for ``name``.
 
         Examples:
-            adapter.indicator("ema_21")
+            adapter.indicator("ema_20")
             adapter.indicator("atr")
             adapter.indicator("rsi")
             adapter.indicator("macd")

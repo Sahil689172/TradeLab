@@ -49,20 +49,19 @@ def test_indicator_atr_alias(adapter: IndicatorAdapter) -> None:
 
 
 def test_indicator_ema_by_exact_column(adapter: IndicatorAdapter) -> None:
-    # Feature engine ships ema_9/21/50/200 (not ema_20).
-    result = adapter.indicator("ema_21")
+    result = adapter.indicator("ema_20")
 
     assert isinstance(result, IndicatorSeries)
-    assert result.name == "ema_21"
-    assert result.column == "ema_21"
+    assert result.name == "ema_20"
+    assert result.column == "ema_20"
     assert result.latest_value is not None
 
 
-def test_indicator_ema_20_missing_raises_helpful_error(adapter: IndicatorAdapter) -> None:
-    with pytest.raises(IndicatorNotFoundError, match="ema_20") as exc_info:
-        adapter.indicator("ema_20")
+def test_indicator_missing_ema_raises_helpful_error(adapter: IndicatorAdapter) -> None:
+    with pytest.raises(IndicatorNotFoundError, match="ema_15") as exc_info:
+        adapter.indicator("ema_15")
 
-    assert "ema_21" in str(exc_info.value) or "ema_9" in str(exc_info.value)
+    assert "ema_20" in str(exc_info.value) or "ema_21" in str(exc_info.value) or "ema_9" in str(exc_info.value)
 
 
 def test_indicator_macd_returns_bundle(adapter: IndicatorAdapter) -> None:

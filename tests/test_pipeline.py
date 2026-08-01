@@ -15,6 +15,7 @@ def test_pipeline_outputs_all_feature_groups() -> None:
     expected_columns = {
         "date",
         "ema_9",
+        "ema_20",
         "ema_21",
         "ema_50",
         "ema_200",

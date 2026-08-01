@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 
 IndicatorModule = Callable[[pd.DataFrame], pd.DataFrame]
 REQUIRED_COLUMNS = ("date", "open", "high", "low", "close", "adj_close", "volume")
-PIPELINE_VERSION = "a3.0.0"
+PIPELINE_VERSION = "a3.1.0"
 
 DEFAULT_MODULES: tuple[IndicatorModule, ...] = (
     compute_trend_features,

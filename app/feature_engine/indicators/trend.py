@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-EMA_PERIODS = (9, 21, 50, 200)
+EMA_PERIODS = (9, 20, 21, 50, 200)
 SMA_PERIODS = (20, 50, 200)
 
 
