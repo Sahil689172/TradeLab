@@ -33,6 +33,13 @@ ALIASES: dict[str, str] = {
     "super_trend": "supertrend",
     "supertrend_direction": "supertrend_direction",
     "st_direction": "supertrend_direction",
+    # Attached by DonchianChannelService
+    "donchian": "donchian_middle",
+    "donchian_upper": "donchian_upper",
+    "donchian_lower": "donchian_lower",
+    "donchian_middle": "donchian_middle",
+    "donchian_entry_upper": "donchian_entry_upper",
+    "donchian_entry_lower": "donchian_entry_lower",
 }
 
 MACD_COLUMNS: tuple[str, str, str] = ("macd", "macd_signal", "macd_histogram")

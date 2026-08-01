@@ -11,6 +11,11 @@ from app.strategies.darvas_box import (
     DarvasBoxStrategyConfig,
     register_darvas_box_strategy,
 )
+from app.strategies.donchian import (
+    DonchianStrategy,
+    DonchianStrategyConfig,
+    register_donchian_strategy,
+)
 from app.strategies.ema_trend import EMATrendConfig, EMATrendStrategy, register_ema_trend_strategy
 from app.strategies.momentum import (
     MomentumConfig,
@@ -53,6 +58,8 @@ __all__ = [
     "CPRStrategyConfig",
     "DarvasBoxStrategy",
     "DarvasBoxStrategyConfig",
+    "DonchianStrategy",
+    "DonchianStrategyConfig",
     "EMATrendConfig",
     "EMATrendStrategy",
     "MomentumConfig",
@@ -74,6 +81,7 @@ __all__ = [
     "register_break_retest_strategy",
     "register_cpr_strategy",
     "register_darvas_box_strategy",
+    "register_donchian_strategy",
     "register_ema_trend_strategy",
     "register_momentum_strategy",
     "register_opening_range_breakout_strategy",
