@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import pytest
 
+from app.levels.calculator import cpr_levels
 from app.levels.schemas import (
     CamarillaPivotLevels,
     ClassicPivotLevels,
@@ -71,6 +72,7 @@ def make_levels(*, pdh: float = 100.0, pdl: float = 90.0, reference: float = 101
         weekly_pivot=94.0,
         classic_pivot=classic,
         camarilla_pivot=camarilla,
+        cpr=cpr_levels(pdh, pdl, reference),
         supports=[
             PriceLevel(kind=LevelKind.PREVIOUS_DAY_LOW, price=pdl, label="Previous Day Low"),
             PriceLevel(kind=LevelKind.CLASSIC_SUPPORT_1, price=88.0, label="Classic S1"),

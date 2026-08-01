@@ -15,6 +15,7 @@ from app.levels.schemas import (
     PeriodRange,
     PriceLevel,
 )
+from app.levels.calculator import cpr_levels
 from app.market_structure.schemas import MarketStructureResult, TrendDirection
 from app.services.strategy_engine.indicators import (
     VWAPMode,
@@ -89,6 +90,7 @@ def make_levels(*, reference: float = 101.0) -> LevelsSnapshot:
         weekly_pivot=99.0,
         classic_pivot=classic,
         camarilla_pivot=camarilla,
+        cpr=cpr_levels(105.0, 95.0, 100.0),
         supports=[
             PriceLevel(kind=LevelKind.PREVIOUS_DAY_LOW, price=95.0, label="Previous Day Low"),
             PriceLevel(kind=LevelKind.CLASSIC_SUPPORT_1, price=98.0, label="Classic S1"),

@@ -14,6 +14,7 @@ from app.levels.calculator import (
     build_support_resistance,
     camarilla_pivot_levels,
     classic_pivot_levels,
+    cpr_levels,
     opening_range,
     previous_day_range,
     previous_month_range,
@@ -115,6 +116,21 @@ def test_camarilla_pivot_formula() -> None:
     assert levels.support_4 == pytest.approx(110.0 - span * 1.1 / 2.0)
 
 
+def test_cpr_levels_formula() -> None:
+    levels = cpr_levels(high=120.0, low=100.0, close=110.0)
+    pivot = (120.0 + 100.0 + 110.0) / 3.0
+    bc = (120.0 + 100.0) / 2.0
+    tc = (2.0 * pivot) - bc
+
+    assert levels.pivot == pytest.approx(pivot)
+    assert levels.bc == pytest.approx(bc)
+    assert levels.tc == pytest.approx(tc)
+    assert levels.lower == pytest.approx(min(bc, tc))
+    assert levels.upper == pytest.approx(max(bc, tc))
+    assert levels.width == pytest.approx(abs(tc - bc))
+    assert levels.width_pct == pytest.approx(abs(tc - bc) / pivot)
+
+
 # ---------------------------------------------------------------------------
 # Period levels
 # ---------------------------------------------------------------------------
@@ -178,6 +194,9 @@ def test_levels_service_computes_all_requested_fields() -> None:
     assert snapshot.classic_pivot.support_1 < snapshot.classic_pivot.pivot
     assert snapshot.camarilla_pivot.resistance_4 > snapshot.camarilla_pivot.resistance_1
     assert snapshot.camarilla_pivot.support_4 < snapshot.camarilla_pivot.support_1
+    assert snapshot.cpr.pivot == pytest.approx(snapshot.classic_pivot.pivot)
+    assert snapshot.cpr.upper >= snapshot.cpr.lower
+    assert snapshot.cpr.width_pct >= 0.0
     assert snapshot.supports
     assert snapshot.resistances
 

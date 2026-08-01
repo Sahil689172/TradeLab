@@ -17,6 +17,7 @@ from app.confluence import (
     VerdictThresholds,
 )
 from app.feature_engine.pipeline import FeaturePipeline
+from app.levels.calculator import cpr_levels
 from app.levels.schemas import (
     CamarillaPivotLevels,
     ClassicPivotLevels,
@@ -120,6 +121,7 @@ def make_levels(*, reference: float = 105.0, support: float = 104.8, resistance:
         weekly_pivot=99.0,
         classic_pivot=classic,
         camarilla_pivot=camarilla,
+        cpr=cpr_levels(108.0, 98.0, 100.0),
         supports=[
             PriceLevel(kind=LevelKind.PREVIOUS_DAY_LOW, price=support, label="Previous Day Low"),
         ],

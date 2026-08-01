@@ -10,6 +10,7 @@ from app.levels.calculator import (
     camarilla_pivot_levels,
     classic_pivot_levels,
     collect_named_levels,
+    cpr_levels,
     normalize_ohlcv,
     opening_range,
     previous_day_range,
@@ -22,7 +23,7 @@ from app.levels.schemas import LevelsSnapshot
 
 logger = get_logger(__name__)
 
-ENGINE_VERSION = "1.0.0"
+ENGINE_VERSION = "1.1.0"
 
 
 class LevelsService:
@@ -93,6 +94,11 @@ class LevelsService:
             previous_day.low,
             previous_day.close,
         )
+        cpr = cpr_levels(
+            previous_day.high,
+            previous_day.low,
+            previous_day.close,
+        )
 
         named = collect_named_levels(
             previous_day_high=previous_day.high,
@@ -107,6 +113,7 @@ class LevelsService:
             weekly_pivot=weekly.pivot,
             classic=classic,
             camarilla=camarilla,
+            cpr=cpr,
         )
         supports, resistances = build_support_resistance(
             named,
@@ -130,6 +137,7 @@ class LevelsService:
             weekly_pivot=weekly.pivot,
             classic_pivot=classic,
             camarilla_pivot=camarilla,
+            cpr=cpr,
             supports=supports,
             resistances=resistances,
             previous_day=previous_day,

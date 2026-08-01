@@ -35,6 +35,9 @@ class LevelKind(str, Enum):
     CAMARILLA_SUPPORT_2 = "CAMARILLA_SUPPORT_2"
     CAMARILLA_SUPPORT_3 = "CAMARILLA_SUPPORT_3"
     CAMARILLA_SUPPORT_4 = "CAMARILLA_SUPPORT_4"
+    CPR_PIVOT = "CPR_PIVOT"
+    CPR_BC = "CPR_BC"
+    CPR_TC = "CPR_TC"
 
 
 class PriceLevel(BaseModel):
@@ -77,6 +80,25 @@ class CamarillaPivotLevels(BaseModel):
     support_4: float = Field(..., gt=0.0)
 
 
+class CPRLevels(BaseModel):
+    """Central Pivot Range from a prior period high/low/close.
+
+    Pivot matches classic daily pivot. BC / TC form the central range.
+    ``lower`` / ``upper`` are ordered bounds (BC can exceed TC when the
+    prior close is skewed).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pivot: float = Field(..., gt=0.0)
+    bc: float = Field(..., gt=0.0, description="Bottom Central")
+    tc: float = Field(..., gt=0.0, description="Top Central")
+    lower: float = Field(..., gt=0.0)
+    upper: float = Field(..., gt=0.0)
+    width: float = Field(..., ge=0.0)
+    width_pct: float = Field(..., ge=0.0, description="width / pivot")
+
+
 class PeriodRange(BaseModel):
     """High/low (and optional close) aggregated over a prior period."""
 
@@ -116,6 +138,7 @@ class LevelsSnapshot(BaseModel):
     weekly_pivot: float = Field(..., gt=0.0)
     classic_pivot: ClassicPivotLevels
     camarilla_pivot: CamarillaPivotLevels
+    cpr: CPRLevels
 
     supports: list[PriceLevel]
     resistances: list[PriceLevel]

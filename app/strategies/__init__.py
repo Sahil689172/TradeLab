@@ -1,5 +1,6 @@
 """Concrete TradeLab trading strategies."""
 
+from app.strategies.cpr import CPRStrategy, CPRStrategyConfig, register_cpr_strategy
 from app.strategies.ema_trend import EMATrendConfig, EMATrendStrategy, register_ema_trend_strategy
 from app.strategies.opening_range_breakout import (
     OpeningRangeBreakoutConfig,
@@ -14,6 +15,8 @@ from app.strategies.previous_day_breakout import (
 from app.strategies.vwap import VWAPStrategy, VWAPStrategyConfig, register_vwap_strategy
 
 __all__ = [
+    "CPRStrategy",
+    "CPRStrategyConfig",
     "EMATrendConfig",
     "EMATrendStrategy",
     "OpeningRangeBreakoutConfig",
@@ -22,6 +25,7 @@ __all__ = [
     "PreviousDayBreakoutStrategy",
     "VWAPStrategy",
     "VWAPStrategyConfig",
+    "register_cpr_strategy",
     "register_ema_trend_strategy",
     "register_opening_range_breakout_strategy",
     "register_previous_day_breakout_strategy",

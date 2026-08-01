@@ -10,6 +10,7 @@ from app.levels.exceptions import LevelsValidationError
 from app.levels.schemas import (
     CamarillaPivotLevels,
     ClassicPivotLevels,
+    CPRLevels,
     LevelKind,
     PeriodRange,
     PriceLevel,
@@ -47,6 +48,31 @@ def camarilla_pivot_levels(high: float, low: float, close: float) -> CamarillaPi
         support_2=close - span * 1.1 / 6.0,
         support_3=close - span * 1.1 / 4.0,
         support_4=close - span * 1.1 / 2.0,
+    )
+
+
+def cpr_levels(high: float, low: float, close: float) -> CPRLevels:
+    """Central Pivot Range from a prior period high/low/close.
+
+    Pivot = (H+L+C)/3, BC = (H+L)/2, TC = 2*Pivot - BC.
+    Classic R1–R3 / S1–S3 remain in ``classic_pivot_levels``.
+    """
+    _validate_hlc(high, low, close)
+    pivot = (high + low + close) / 3.0
+    bc = (high + low) / 2.0
+    tc = (2.0 * pivot) - bc
+    lower = min(bc, tc)
+    upper = max(bc, tc)
+    width = upper - lower
+    width_pct = 0.0 if pivot <= 0 else width / pivot
+    return CPRLevels(
+        pivot=pivot,
+        bc=bc,
+        tc=tc,
+        lower=lower,
+        upper=upper,
+        width=width,
+        width_pct=width_pct,
     )
 
 
@@ -155,6 +181,7 @@ def collect_named_levels(
     weekly_pivot: float,
     classic: ClassicPivotLevels,
     camarilla: CamarillaPivotLevels,
+    cpr: CPRLevels,
 ) -> list[PriceLevel]:
     """Flatten all computed levels into reusable ``PriceLevel`` objects."""
     return [
@@ -182,6 +209,9 @@ def collect_named_levels(
         PriceLevel(kind=LevelKind.CAMARILLA_SUPPORT_2, price=camarilla.support_2, label="Camarilla S2"),
         PriceLevel(kind=LevelKind.CAMARILLA_SUPPORT_3, price=camarilla.support_3, label="Camarilla S3"),
         PriceLevel(kind=LevelKind.CAMARILLA_SUPPORT_4, price=camarilla.support_4, label="Camarilla S4"),
+        PriceLevel(kind=LevelKind.CPR_PIVOT, price=cpr.pivot, label="CPR Pivot"),
+        PriceLevel(kind=LevelKind.CPR_BC, price=cpr.bc, label="CPR Bottom Central"),
+        PriceLevel(kind=LevelKind.CPR_TC, price=cpr.tc, label="CPR Top Central"),
     ]
 
 
