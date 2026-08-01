@@ -34,6 +34,11 @@ from app.strategies.relative_strength import (
     RelativeStrengthStrategy,
     register_relative_strength_strategy,
 )
+from app.strategies.supertrend import (
+    SuperTrendStrategy,
+    SuperTrendStrategyConfig,
+    register_supertrend_strategy,
+)
 from app.strategies.volume_breakout import (
     VolumeBreakoutConfig,
     VolumeBreakoutStrategy,
@@ -60,6 +65,8 @@ __all__ = [
     "RelativeStrengthConfig",
     "RelativeStrengthScreener",
     "RelativeStrengthStrategy",
+    "SuperTrendStrategy",
+    "SuperTrendStrategyConfig",
     "VolumeBreakoutConfig",
     "VolumeBreakoutStrategy",
     "VWAPStrategy",
@@ -72,6 +79,7 @@ __all__ = [
     "register_opening_range_breakout_strategy",
     "register_previous_day_breakout_strategy",
     "register_relative_strength_strategy",
+    "register_supertrend_strategy",
     "register_volume_breakout_strategy",
     "register_vwap_strategy",
 ]

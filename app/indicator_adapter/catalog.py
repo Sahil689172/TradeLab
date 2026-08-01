@@ -28,6 +28,11 @@ ALIASES: dict[str, str] = {
     "vwap": "vwap",
     "vwap_daily": "vwap",
     "vwap_slope": "vwap_slope",
+    # Attached by SuperTrendService (app.services.strategy_engine.indicators.supertrend)
+    "supertrend": "supertrend",
+    "super_trend": "supertrend",
+    "supertrend_direction": "supertrend_direction",
+    "st_direction": "supertrend_direction",
 }
 
 MACD_COLUMNS: tuple[str, str, str] = ("macd", "macd_signal", "macd_histogram")

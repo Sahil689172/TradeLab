@@ -1,5 +1,11 @@
 """Reusable strategy-engine indicator services."""
 
+from app.services.strategy_engine.indicators.supertrend import (
+    SuperTrendService,
+    SuperTrendSnapshot,
+    SuperTrendValidationError,
+    compute_supertrend,
+)
 from app.services.strategy_engine.indicators.volume_analysis import (
     VolumeAnalysisService,
     VolumeStatistics,
@@ -14,6 +20,9 @@ from app.services.strategy_engine.indicators.vwap import (
 )
 
 __all__ = [
+    "SuperTrendService",
+    "SuperTrendSnapshot",
+    "SuperTrendValidationError",
     "VWAPMode",
     "VWAPService",
     "VWAPSnapshot",
@@ -21,5 +30,6 @@ __all__ = [
     "VolumeStatistics",
     "VolumeValidationError",
     "compute_daily_vwap",
+    "compute_supertrend",
     "compute_vwap_slope",
 ]
