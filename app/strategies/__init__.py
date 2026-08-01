@@ -11,6 +11,7 @@ from app.strategies.previous_day_breakout import (
     PreviousDayBreakoutStrategy,
     register_previous_day_breakout_strategy,
 )
+from app.strategies.vwap import VWAPStrategy, VWAPStrategyConfig, register_vwap_strategy
 
 __all__ = [
     "EMATrendConfig",
@@ -19,7 +20,10 @@ __all__ = [
     "OpeningRangeBreakoutStrategy",
     "PreviousDayBreakoutConfig",
     "PreviousDayBreakoutStrategy",
+    "VWAPStrategy",
+    "VWAPStrategyConfig",
     "register_ema_trend_strategy",
     "register_opening_range_breakout_strategy",
     "register_previous_day_breakout_strategy",
+    "register_vwap_strategy",
 ]

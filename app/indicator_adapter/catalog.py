@@ -24,6 +24,10 @@ ALIASES: dict[str, str] = {
     "macd_signal": "macd_signal",
     "macd_hist": "macd_histogram",
     "macd_histogram": "macd_histogram",
+    # Attached by VWAPService (app.services.strategy_engine.indicators.vwap)
+    "vwap": "vwap",
+    "vwap_daily": "vwap",
+    "vwap_slope": "vwap_slope",
 }
 
 MACD_COLUMNS: tuple[str, str, str] = ("macd", "macd_signal", "macd_histogram")
