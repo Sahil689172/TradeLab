@@ -12,6 +12,17 @@ from app.strategies.previous_day_breakout import (
     PreviousDayBreakoutStrategy,
     register_previous_day_breakout_strategy,
 )
+from app.strategies.relative_strength import (
+    RelativeStrengthConfig,
+    RelativeStrengthScreener,
+    RelativeStrengthStrategy,
+    register_relative_strength_strategy,
+)
+from app.strategies.volume_breakout import (
+    VolumeBreakoutConfig,
+    VolumeBreakoutStrategy,
+    register_volume_breakout_strategy,
+)
 from app.strategies.vwap import VWAPStrategy, VWAPStrategyConfig, register_vwap_strategy
 
 __all__ = [
@@ -23,11 +34,18 @@ __all__ = [
     "OpeningRangeBreakoutStrategy",
     "PreviousDayBreakoutConfig",
     "PreviousDayBreakoutStrategy",
+    "RelativeStrengthConfig",
+    "RelativeStrengthScreener",
+    "RelativeStrengthStrategy",
+    "VolumeBreakoutConfig",
+    "VolumeBreakoutStrategy",
     "VWAPStrategy",
     "VWAPStrategyConfig",
     "register_cpr_strategy",
     "register_ema_trend_strategy",
     "register_opening_range_breakout_strategy",
     "register_previous_day_breakout_strategy",
+    "register_relative_strength_strategy",
+    "register_volume_breakout_strategy",
     "register_vwap_strategy",
 ]
