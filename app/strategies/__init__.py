@@ -1,6 +1,11 @@
 """Concrete TradeLab trading strategies."""
 
 from app.strategies.cpr import CPRStrategy, CPRStrategyConfig, register_cpr_strategy
+from app.strategies.darvas_box import (
+    DarvasBoxStrategy,
+    DarvasBoxStrategyConfig,
+    register_darvas_box_strategy,
+)
 from app.strategies.ema_trend import EMATrendConfig, EMATrendStrategy, register_ema_trend_strategy
 from app.strategies.momentum import (
     MomentumConfig,
@@ -34,6 +39,8 @@ from app.strategies.vwap import VWAPStrategy, VWAPStrategyConfig, register_vwap_
 __all__ = [
     "CPRStrategy",
     "CPRStrategyConfig",
+    "DarvasBoxStrategy",
+    "DarvasBoxStrategyConfig",
     "EMATrendConfig",
     "EMATrendStrategy",
     "MomentumConfig",
@@ -51,6 +58,7 @@ __all__ = [
     "VWAPStrategy",
     "VWAPStrategyConfig",
     "register_cpr_strategy",
+    "register_darvas_box_strategy",
     "register_ema_trend_strategy",
     "register_momentum_strategy",
     "register_opening_range_breakout_strategy",
