@@ -1,5 +1,10 @@
 """Concrete TradeLab trading strategies."""
 
+from app.strategies.break_retest import (
+    BreakRetestStrategy,
+    BreakRetestStrategyConfig,
+    register_break_retest_strategy,
+)
 from app.strategies.cpr import CPRStrategy, CPRStrategyConfig, register_cpr_strategy
 from app.strategies.darvas_box import (
     DarvasBoxStrategy,
@@ -37,6 +42,8 @@ from app.strategies.volume_breakout import (
 from app.strategies.vwap import VWAPStrategy, VWAPStrategyConfig, register_vwap_strategy
 
 __all__ = [
+    "BreakRetestStrategy",
+    "BreakRetestStrategyConfig",
     "CPRStrategy",
     "CPRStrategyConfig",
     "DarvasBoxStrategy",
@@ -57,6 +64,7 @@ __all__ = [
     "VolumeBreakoutStrategy",
     "VWAPStrategy",
     "VWAPStrategyConfig",
+    "register_break_retest_strategy",
     "register_cpr_strategy",
     "register_darvas_box_strategy",
     "register_ema_trend_strategy",
