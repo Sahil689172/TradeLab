@@ -108,3 +108,12 @@ python backend/scripts/validate_strategies.py --strategy ema --symbol RELIANCE
 ```
 
 Produces a validation table: status, signal counts, avg confidence/holding, errors.
+
+### Universe validation (A4.14)
+
+```bash
+python backend/scripts/validate_universe.py --limit 10 --workers 4
+python backend/scripts/validate_universe.py --symbol RELIANCE --strategy all
+```
+
+See `app/services/universe_validation/README.md`.

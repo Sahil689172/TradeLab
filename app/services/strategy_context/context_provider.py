@@ -121,8 +121,18 @@ class StrategyContextProvider:
             or ContextRequirement.LEVELS in requirements
             or ContextRequirement.RS_RANKING in requirements
             or ContextRequirement.MOMENTUM_RANKING in requirements
+            or ContextRequirement.INTRADAY_FEATURES in requirements
         )
         daily = self._resolve_daily(sym, run_features, notes) if needs_daily else None
+
+        # ORB / PDB need multiple bars in the latest session; expand daily → session.
+        if ContextRequirement.INTRADAY_FEATURES in requirements:
+            run_features = self._ensure_session_features(
+                run_features,
+                daily=daily,
+                symbol=sym,
+                notes=notes,
+            )
 
         levels = None
         if ContextRequirement.LEVELS in requirements:
@@ -149,9 +159,6 @@ class StrategyContextProvider:
                 daily if daily is not None else run_features,
                 notes,
             )
-
-        if ContextRequirement.INTRADAY_FEATURES in requirements:
-            notes.append("Using feature frame as intraday/session context")
 
         run_features = attach_symbol(run_features, sym)
         return StrategyContext(
@@ -300,6 +307,42 @@ class StrategyContextProvider:
                 f"Unable to compute market structure for {symbol}: {exc}",
             ) from exc
 
+    def _ensure_session_features(
+        self,
+        features: pd.DataFrame,
+        *,
+        daily: pd.DataFrame | None,
+        symbol: str,
+        notes: list[str],
+    ) -> pd.DataFrame:
+        """Ensure the feature frame has enough bars in the latest session.
+
+        Daily OHLCV (1 bar/day) cannot satisfy ORB's opening-range requirement
+        (default 3 five-minute bars). Expand recent daily bars into synthetic
+        intraday session bars without changing strategy logic.
+        """
+        session_bars = _bars_in_latest_session(features)
+        if session_bars >= self._config.min_session_bars:
+            notes.append(
+                f"Session data ready ({session_bars} bars in latest session)",
+            )
+            return features
+
+        source = daily if daily is not None else features
+        expanded = _expand_daily_to_session(
+            source,
+            symbol=symbol,
+            bar_minutes=self._config.intraday_bar_minutes,
+            min_session_bars=self._config.min_session_bars,
+            session_days=max(5, self._config.synthetic_bars // 24),
+        )
+        notes.append(
+            f"Expanded daily bars → {self._config.intraday_bar_minutes}m session "
+            f"data ({_bars_in_latest_session(expanded)} bars in latest session; "
+            f"was {session_bars})",
+        )
+        return expanded
+
     def _ensure_vwap(self, features: pd.DataFrame, notes: list[str]) -> pd.DataFrame:
         if "vwap" in features.columns:
             return features
@@ -410,6 +453,130 @@ class StrategyContextProvider:
 def apply_context(strategy: BaseStrategy, context: StrategyContext) -> BaseStrategy:
     """Module-level apply helper used by ``BaseStrategy.execute``."""
     return StrategyContextProvider().apply(strategy, context)
+
+
+def _bars_in_latest_session(frame: pd.DataFrame, date_column: str = "date") -> int:
+    if frame.empty or date_column not in frame.columns:
+        return 0
+    dates = pd.to_datetime(frame[date_column])
+    as_of_day = dates.iloc[-1].normalize()
+    return int((dates.dt.normalize() == as_of_day).sum())
+
+
+def _expand_daily_to_session(
+    daily: pd.DataFrame,
+    *,
+    symbol: str,
+    bar_minutes: int,
+    min_session_bars: int,
+    session_days: int,
+) -> pd.DataFrame:
+    """Expand daily OHLC into synthetic intraday session bars.
+
+    Each day becomes a cash-session strip (09:15→15:15) so ORB can resolve an
+    opening range of multiple bars. Indicator columns are carried from the
+    daily close when present.
+    """
+    frame = daily.copy()
+    frame["date"] = pd.to_datetime(frame["date"])
+    for col in ("open", "high", "low", "close", "volume"):
+        if col not in frame.columns:
+            raise StrategyContextError(
+                f"Cannot expand to session data: missing column '{col}'",
+            )
+        frame[col] = pd.to_numeric(frame[col], errors="coerce")
+
+    frame = (
+        frame.dropna(subset=["open", "high", "low", "close"])
+        .drop_duplicates(subset=["date"], keep="last")
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+    frame["_day"] = frame["date"].dt.normalize()
+
+    indicator_cols = [
+        col
+        for col in frame.columns
+        if col not in {"date", "_day", "open", "high", "low", "close", "volume"}
+    ]
+    agg: dict[str, str] = {
+        "open": "first",
+        "high": "max",
+        "low": "min",
+        "close": "last",
+        "volume": "sum",
+    }
+    for col in indicator_cols:
+        agg[col] = "last"
+
+    daily_rows = (
+        frame.groupby("_day", as_index=False)
+        .agg(agg)
+        .rename(columns={"_day": "date"})
+    )
+
+    take = max(session_days, 5)
+    daily_rows = daily_rows.tail(take).reset_index(drop=True)
+
+    # Bars from 09:15 through 15:15 inclusive
+    session_minutes = list(range(0, 6 * 60 + 1, bar_minutes))
+    if len(session_minutes) < min_session_bars:
+        session_minutes = list(range(0, min_session_bars * bar_minutes, bar_minutes))
+
+    rows: list[dict[str, object]] = []
+    for _, day_row in daily_rows.iterrows():
+        day_start = pd.Timestamp(day_row["date"]).normalize() + pd.Timedelta(
+            hours=9,
+            minutes=15,
+        )
+        o = float(day_row["open"])
+        h = float(day_row["high"])
+        low = float(day_row["low"])
+        c = float(day_row["close"])
+        vol = float(day_row.get("volume", 0.0) or 0.0)
+        n = len(session_minutes)
+        per_bar_vol = max(vol / n, 1.0)
+
+        for i, minute in enumerate(session_minutes):
+            if n == 1:
+                px = c
+            else:
+                t = i / (n - 1)
+                if t <= 1 / 3:
+                    px = o + (h - o) * (t * 3)
+                elif t <= 2 / 3:
+                    px = h + (low - h) * ((t - 1 / 3) * 3)
+                else:
+                    px = low + (c - low) * ((t - 2 / 3) * 3)
+
+            bar: dict[str, object] = {
+                "date": day_start + pd.Timedelta(minutes=minute),
+                "open": px - 0.05,
+                "high": max(px + 0.15, px),
+                "low": min(px - 0.15, px),
+                "close": px,
+                "volume": per_bar_vol,
+            }
+            for col in indicator_cols:
+                val = day_row.get(col)
+                if val is None or (isinstance(val, float) and pd.isna(val)):
+                    continue
+                try:
+                    bar[col] = float(val)
+                except (TypeError, ValueError):
+                    bar[col] = val
+            bar.setdefault("relative_volume_20", 1.5)
+            bar.setdefault("atr_14", max((h - low) * 0.3, 0.5))
+            bar.setdefault("ema_9", px)
+            bar.setdefault("ema_20", px * 1.001)
+            bar.setdefault("ema_21", px * 1.001)
+            bar.setdefault("ema_50", px * 0.999)
+            bar.setdefault("adx_14", 25.0)
+            bar.setdefault("rsi_14", 55.0)
+            bar.setdefault("vwap", (o + c) / 2.0)
+            rows.append(bar)
+
+    return attach_symbol(pd.DataFrame(rows), symbol)
 
 
 def _synthetic_features(*, symbol: str, bars: int) -> pd.DataFrame:

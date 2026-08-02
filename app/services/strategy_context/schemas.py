@@ -66,3 +66,6 @@ class ContextProviderConfig(BaseModel):
     structure_swing_length: int = Field(default=2, ge=1)
     allow_synthetic_features: bool = True
     synthetic_bars: int = Field(default=120, ge=40)
+    # Minimum bars required in the latest session for ORB / intraday strategies
+    min_session_bars: int = Field(default=12, ge=4)
+    intraday_bar_minutes: int = Field(default=5, ge=1)

@@ -13,9 +13,9 @@ STRATEGY_CONTEXT_REQUIREMENTS: dict[str, tuple[ContextRequirement, ...]] = {
         ContextRequirement.LEVELS,
         ContextRequirement.MARKET_STRUCTURE,
     ),
-    # Session bars drive opening-range resolution inside the strategy.
+    # Session/intraday bars drive opening-range resolution inside the strategy.
     "opening_range_breakout": (
-        ContextRequirement.FEATURES,
+        ContextRequirement.INTRADAY_FEATURES,
         ContextRequirement.MARKET_STRUCTURE,
     ),
     "vwap": (

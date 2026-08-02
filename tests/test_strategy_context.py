@@ -69,6 +69,9 @@ def test_requirements_map_covers_twelve_strategies() -> None:
     assert ContextRequirement.RS_RANKING in requirements_for("relative_strength")
     assert ContextRequirement.MOMENTUM_RANKING in requirements_for("momentum")
     assert ContextRequirement.DAILY_OHLCV in requirements_for("previous_day_breakout")
+    assert ContextRequirement.INTRADAY_FEATURES in requirements_for(
+        "opening_range_breakout",
+    )
 
 
 def test_provider_prepares_ema_features_only() -> None:
