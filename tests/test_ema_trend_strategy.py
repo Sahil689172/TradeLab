@@ -183,19 +183,22 @@ def test_deterministic_repeated_runs(strategy: EMATrendStrategy, buy_frame: pd.D
 
 
 def test_feature_pipeline_integration() -> None:
-    """End-to-end: FeaturePipeline columns + close are readable without recalculation."""
+    """End-to-end: FeaturePipeline includes OHLCV + indicators for strategies."""
+    from app.strategy_engine.symbols import attach_symbol
+
     ohlcv = make_prices(120)
     features = FeaturePipeline().transform(ohlcv)
+    assert "close" in features.columns
     assert "ema_20" in features.columns
     assert "ema_50" in features.columns
     assert "adx_14" in features.columns
     assert "atr_14" in features.columns
 
-    market = ohlcv.merge(features, on="date", how="left")
     strategy = EMATrendStrategy(EMATrendConfig(symbol="TEST", min_history_bars=60))
-    plan = StrategyRunner().run(market, strategy)
+    plan = StrategyRunner().run(attach_symbol(features, "TEST"), strategy)
 
     assert plan.strategy_name == "ema_trend"
+    assert plan.symbol == "TEST"
     assert plan.signal in {SignalType.BUY, SignalType.SELL, SignalType.HOLD, SignalType.EXIT}
     assert plan.stop_loss > 0
     assert plan.take_profit_1 > 0

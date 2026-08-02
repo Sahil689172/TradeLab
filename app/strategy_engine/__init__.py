@@ -10,6 +10,7 @@ from app.strategy_engine.exceptions import (
 from app.strategy_engine.models import Signal, SignalType, TradePlan
 from app.strategy_engine.registry import StrategyRegistry
 from app.strategy_engine.runner import StrategyRunner
+from app.strategy_engine.symbols import attach_symbol, resolve_symbol_from_features
 
 __all__ = [
     "BaseStrategy",
@@ -22,4 +23,6 @@ __all__ = [
     "StrategyRunner",
     "StrategyValidationError",
     "TradePlan",
+    "attach_symbol",
+    "resolve_symbol_from_features",
 ]

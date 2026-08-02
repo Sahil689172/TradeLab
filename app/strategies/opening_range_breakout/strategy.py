@@ -170,7 +170,7 @@ class OpeningRangeBreakoutStrategy(BaseStrategy):
         setup = self._assess(features)
         confidence = build_confidence(setup, self._config.confidence_weights).total / 100.0
         return Signal(
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             timestamp=self._timestamp(features),
             signal=setup.signal,
             confidence=confidence,
@@ -204,7 +204,7 @@ class OpeningRangeBreakoutStrategy(BaseStrategy):
         setup = self._assess(features)
         if signal is None:
             signal = Signal(
-                symbol=self._config.symbol,
+                symbol=self.active_symbol,
                 timestamp=self._timestamp(features),
                 signal=setup.signal,
                 confidence=build_confidence(setup, self._config.confidence_weights).total / 100.0,
@@ -268,7 +268,7 @@ class OpeningRangeBreakoutStrategy(BaseStrategy):
 
         plan = OpeningRangeBreakoutPlan(
             strategy_name=self.name,
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             entry_price=entry_price,
             direction=direction,
             signal=signal.signal,
@@ -348,7 +348,7 @@ class OpeningRangeBreakoutStrategy(BaseStrategy):
         # Confluence trend module reinforces the filter when EMA columns exist.
         if {fast_col, slow_col, "rsi_14"}.issubset(features.columns):
             try:
-                result = self._confluence.evaluate(features=features, symbol=self._config.symbol)
+                result = self._confluence.evaluate(features=features, symbol=self.active_symbol)
                 if result.total_score >= 25:
                     bullish = True
                 if result.total_score <= -25:
@@ -368,7 +368,7 @@ class OpeningRangeBreakoutStrategy(BaseStrategy):
                 .clip(lower=1.0)
                 * 1_000
             ).astype("int64")
-        return self._structure_service.analyze(structure_frame, symbol=self._config.symbol)
+        return self._structure_service.analyze(structure_frame, symbol=self.active_symbol)
 
     def _require_opening(self) -> OpeningRangeLevels:
         if self._cached_opening is None:

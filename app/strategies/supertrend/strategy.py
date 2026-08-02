@@ -207,7 +207,7 @@ class SuperTrendStrategy(BaseStrategy):
         self._last_setup = setup
         breakdown = build_confidence(setup, self._config.confidence_weights)
         return Signal(
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             timestamp=self._timestamp(features),
             signal=setup.signal,
             confidence=breakdown.total / 100.0,
@@ -242,7 +242,7 @@ class SuperTrendStrategy(BaseStrategy):
         breakdown = build_confidence(setup, self._config.confidence_weights)
         if signal is None:
             signal = Signal(
-                symbol=self._config.symbol,
+                symbol=self.active_symbol,
                 timestamp=self._timestamp(features),
                 signal=setup.signal,
                 confidence=breakdown.total / 100.0,
@@ -297,7 +297,7 @@ class SuperTrendStrategy(BaseStrategy):
 
         plan = SuperTrendPlan(
             strategy_name=self.name,
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             entry_price=entry_price,
             direction=direction,
             signal=signal.signal,
@@ -374,7 +374,7 @@ class SuperTrendStrategy(BaseStrategy):
     def _resolve_structure(self, frame: pd.DataFrame) -> MarketStructureResult:
         if self._structure_override is not None:
             return self._structure_override
-        return self._structure_service.analyze(frame, symbol=self._config.symbol)
+        return self._structure_service.analyze(frame, symbol=self.active_symbol)
 
     def _resolve_levels(self, frame: pd.DataFrame) -> LevelsSnapshot | None:
         if self._levels_override is not None:
@@ -382,7 +382,7 @@ class SuperTrendStrategy(BaseStrategy):
         if self._levels_service is None:
             return None
         try:
-            return self._levels_service.compute(frame, symbol=self._config.symbol)
+            return self._levels_service.compute(frame, symbol=self.active_symbol)
         except LevelsValidationError:
             return None
 

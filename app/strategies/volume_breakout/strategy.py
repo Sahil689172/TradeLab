@@ -189,7 +189,7 @@ class VolumeBreakoutStrategy(BaseStrategy):
         setup = self._assess(features)
         confidence = build_confidence(setup, self._config.confidence_weights).total / 100.0
         return Signal(
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             timestamp=self._timestamp(features),
             signal=setup.signal,
             confidence=confidence,
@@ -223,7 +223,7 @@ class VolumeBreakoutStrategy(BaseStrategy):
         setup = self._assess(features)
         if signal is None:
             signal = Signal(
-                symbol=self._config.symbol,
+                symbol=self.active_symbol,
                 timestamp=self._timestamp(features),
                 signal=setup.signal,
                 confidence=build_confidence(setup, self._config.confidence_weights).total / 100.0,
@@ -293,7 +293,7 @@ class VolumeBreakoutStrategy(BaseStrategy):
 
         plan = VolumeBreakoutPlan(
             strategy_name=self.name,
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             entry_price=entry_price,
             direction=direction,
             signal=signal.signal,
@@ -336,7 +336,7 @@ class VolumeBreakoutStrategy(BaseStrategy):
     def _resolve_structure(self, frame: pd.DataFrame) -> MarketStructureResult:
         if self._structure_override is not None:
             return self._structure_override
-        return self._structure_service.analyze(frame, symbol=self._config.symbol)
+        return self._structure_service.analyze(frame, symbol=self.active_symbol)
 
     def _resolve_levels(self, frame: pd.DataFrame) -> LevelsSnapshot | None:
         if self._levels_override is not None:
@@ -344,7 +344,7 @@ class VolumeBreakoutStrategy(BaseStrategy):
         if self._levels_service is None:
             return None
         try:
-            return self._levels_service.compute(frame, symbol=self._config.symbol)
+            return self._levels_service.compute(frame, symbol=self.active_symbol)
         except LevelsValidationError as exc:
             logger.debug("Levels unavailable for volume breakout: %s", exc)
             return None

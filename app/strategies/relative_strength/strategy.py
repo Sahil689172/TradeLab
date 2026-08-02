@@ -157,7 +157,7 @@ class RelativeStrengthStrategy(BaseStrategy):
         setup = self._assess(features)
         confidence = self._confidence(setup)
         return Signal(
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             timestamp=self._timestamp(features),
             signal=setup.signal,
             confidence=confidence,
@@ -189,7 +189,7 @@ class RelativeStrengthStrategy(BaseStrategy):
         setup = self._assess(features)
         if signal is None:
             signal = Signal(
-                symbol=self._config.symbol,
+                symbol=self.active_symbol,
                 timestamp=self._timestamp(features),
                 signal=setup.signal,
                 confidence=self._confidence(setup),
@@ -220,7 +220,7 @@ class RelativeStrengthStrategy(BaseStrategy):
             else take_profit_1 - abs(entry_price - take_profit_1) * 0.5
         )
 
-        ranked = lookup_rank(self._require_ranking(), self._config.symbol)
+        ranked = lookup_rank(self._require_ranking(), self.active_symbol)
         score = ranked.score if ranked is not None else None
         benchmark_comparison = None
         sector_comparison = None
@@ -248,7 +248,7 @@ class RelativeStrengthStrategy(BaseStrategy):
 
         plan = RelativeStrengthPlan(
             strategy_name=self.name,
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             entry_price=entry_price,
             direction=direction,
             signal=signal.signal,
@@ -280,7 +280,7 @@ class RelativeStrengthStrategy(BaseStrategy):
 
     def _assess(self, features: pd.DataFrame) -> RelativeStrengthSetup:
         ranking = self._require_ranking()
-        ranked = lookup_rank(ranking, self._config.symbol)
+        ranked = lookup_rank(ranking, self.active_symbol)
         reasons: list[str] = []
         if ranked is None:
             return RelativeStrengthSetup(
@@ -289,7 +289,7 @@ class RelativeStrengthStrategy(BaseStrategy):
                 ema_trend_bullish=False,
                 volume_healthy=False,
                 above_vwap=False,
-                reasons=[f"{self._config.symbol} not found in universe ranking"],
+                reasons=[f"{self.active_symbol} not found in universe ranking"],
             )
 
         top = in_top_percentile(

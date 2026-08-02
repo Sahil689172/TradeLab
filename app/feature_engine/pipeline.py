@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 
 IndicatorModule = Callable[[pd.DataFrame], pd.DataFrame]
 REQUIRED_COLUMNS = ("date", "open", "high", "low", "close", "adj_close", "volume")
-PIPELINE_VERSION = "a3.1.0"
+PIPELINE_VERSION = "a3.2.0"
 
 DEFAULT_MODULES: tuple[IndicatorModule, ...] = (
     compute_trend_features,
@@ -56,9 +56,11 @@ class FeaturePipeline:
             blocks.append(block)
 
         features = pd.concat(
-            [source[["date"]], *blocks],
+            [source, *blocks],
             axis=1,
         )
+        # Keep a single copy of OHLCV + date; indicator modules must not redefine them.
+        features = features.loc[:, ~features.columns.duplicated(keep="first")]
         duplicate_columns = features.columns[features.columns.duplicated()].tolist()
         if duplicate_columns:
             raise ValueError(f"Duplicate feature columns: {duplicate_columns}")

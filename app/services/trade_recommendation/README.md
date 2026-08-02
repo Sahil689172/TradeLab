@@ -8,11 +8,19 @@ Final output layer for every TradeLab strategy. Downstream systems
 
 ---
 
-## Pipeline
+## Symbol propagation
 
-```
-TradePlan  →  Validate  →  Standardize  →  TradeRecommendation
-```
+Feature frames carry the trading symbol in ``attrs["symbol"]`` (or a ``symbol``
+column). ``StrategyRunner`` binds that value onto the strategy before
+``validate`` / ``prepare`` / signal / plan. Concrete strategies emit
+``self.active_symbol`` on ``Signal`` and ``TradePlan`` — never a hardcoded
+default. The recommendation engine copies ``plan.symbol`` unchanged.
+
+## Strategy feature frames
+
+``FeaturePipeline`` emits **OHLCV + indicators**. Legacy ``*_features.parquet``
+files that only stored indicators are joined with ``SYMBOL.parquet`` via
+``load_strategy_features`` / ``merge_ohlcv_features`` before validation.
 
 ```python
 from app.services.trade_recommendation import TradeRecommendationEngine
@@ -73,7 +81,26 @@ print(build_recommendation_report(rec).body)
 
 ---
 
+## Strategy Context Provider
+
+```python
+from app.services.strategy_context import StrategyContextProvider
+
+provider = StrategyContextProvider()
+context = provider.prepare(strategy, "RELIANCE")
+plan = strategy.execute(context)
+```
+
+The provider is the only place that prepares daily data, levels, structure, VWAP/RVOL,
+and RS/momentum rankings. Validators must not call ``bind_daily`` / ``bind_levels`` /
+``bind_ranking`` manually.
+
+---
+
 ## Strategy Validation + CLI
+
+Context for each strategy (daily OHLCV, levels, rankings, VWAP/RVOL) is prepared by
+``StrategyContextProvider`` — the validator does not call ``bind_*`` manually.
 
 ```bash
 python backend/scripts/validate_strategies.py --strategy all --symbol RELIANCE

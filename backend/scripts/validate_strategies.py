@@ -68,27 +68,45 @@ def discover_feature_symbols(storage_dir: Path) -> list[str]:
 
 
 def load_features(symbol: str, storage_dir: Path) -> pd.DataFrame | None:
-    path = storage_dir / f"{symbol}_features.parquet"
-    if not path.exists():
-        # try without suffix naming
-        alt = storage_dir / f"{symbol}.parquet"
-        if alt.exists():
-            return pd.read_parquet(alt)
+    from app.feature_engine.strategy_frame import (
+        features_include_ohlcv,
+        load_strategy_features,
+    )
+    from app.strategy_engine.symbols import attach_symbol
+
+    frame = load_strategy_features(symbol, storage_dir)
+    if frame is None:
         return None
-    return pd.read_parquet(path)
+    if not features_include_ohlcv(frame):
+        print(
+            f"WARNING: {symbol} feature file is missing OHLCV columns and no "
+            f"raw {symbol}.parquet was found to merge — cannot run strategies on it.",
+        )
+        return None
+    return attach_symbol(frame, symbol)
 
 
 def synthetic_features(*, bars: int = 80, symbol: str = "RELIANCE") -> pd.DataFrame:
-    """Minimal feature frame sufficient for most strategy validators."""
-    start = pd.Timestamp("2024-01-02 09:15")
+    """Minimal multi-session feature frame sufficient for most strategy validators."""
+    sessions: list[pd.Timestamp] = []
+    day = pd.Timestamp("2024-06-03 09:15")
+    while len(sessions) < bars:
+        for minute in range(0, 6 * 60, 15):
+            sessions.append(day + pd.Timedelta(minutes=minute))
+            if len(sessions) >= bars:
+                break
+        day = day + pd.Timedelta(days=1)
+        while day.weekday() >= 5:
+            day = day + pd.Timedelta(days=1)
+
     rows = []
     price = 100.0
-    for index in range(bars):
+    for index, ts in enumerate(sessions[:bars]):
         price = price + (0.4 if index % 7 else -0.2)
         close = price
         rows.append(
             {
-                "date": start + pd.Timedelta(minutes=15 * index),
+                "date": ts,
                 "open": close - 0.1,
                 "high": close + 0.8,
                 "low": close - 0.8,
@@ -106,8 +124,9 @@ def synthetic_features(*, bars: int = 80, symbol: str = "RELIANCE") -> pd.DataFr
             },
         )
     frame = pd.DataFrame(rows)
-    frame.attrs["symbol"] = symbol
-    return frame
+    from app.strategy_engine.symbols import attach_symbol
+
+    return attach_symbol(frame, symbol)
 
 
 def main() -> int:

@@ -8,6 +8,11 @@ from statistics import mean
 
 import pandas as pd
 
+from app.services.strategy_context import (
+    ContextProviderConfig,
+    StrategyContextError,
+    StrategyContextProvider,
+)
 from app.services.trade_recommendation.engine import TradeRecommendationEngine
 from app.services.trade_recommendation.report import format_validation_report_table
 from app.services.trade_recommendation.schemas import (
@@ -35,7 +40,10 @@ from app.strategy_engine.exceptions import StrategyEngineError, StrategyValidati
 from app.strategy_engine.models import SignalType
 from app.strategy_engine.registry import StrategyRegistry
 from app.strategy_engine.runner import StrategyRunner
-
+from app.strategy_engine.symbols import (
+    UNBOUND_SYMBOL,
+    resolve_symbol_from_features,
+)
 
 RegisterFn = Callable[[StrategyRegistry], BaseStrategy]
 
@@ -79,13 +87,18 @@ _ALL_REGISTRARS: tuple[RegisterFn, ...] = (
 
 
 class StrategyValidationFramework:
-    """Run strategies on feature data and verify TradeRecommendation contracts."""
+    """Run strategies on feature data and verify TradeRecommendation contracts.
+
+    Execution context (daily / levels / rankings) is prepared exclusively by
+    ``StrategyContextProvider`` — this framework never calls ``bind_*`` manually.
+    """
 
     def __init__(
         self,
         *,
         engine: TradeRecommendationEngine | None = None,
         runner: StrategyRunner | None = None,
+        context_provider: StrategyContextProvider | None = None,
         config: RecommendationConfig | None = None,
         timeframe: str = "15 Minute",
     ) -> None:
@@ -93,6 +106,10 @@ class StrategyValidationFramework:
         self._engine = engine or TradeRecommendationEngine(self._config)
         self._runner = runner or StrategyRunner()
         self._timeframe = timeframe
+        self._context_provider = context_provider or StrategyContextProvider(
+            ContextProviderConfig(timeframe=timeframe),
+            runner=self._runner,
+        )
 
     def resolve_strategies(self, names: list[str] | None) -> list[BaseStrategy]:
         """Build strategy instances from alias list or all known strategies."""
@@ -132,7 +149,24 @@ class StrategyValidationFramework:
         status = "PASS"
 
         try:
-            plan = self._runner.run(features, strategy)
+            resolved_symbol = (
+                symbol.strip().upper()
+                if symbol
+                else resolve_symbol_from_features(features)
+            )
+            if not resolved_symbol or resolved_symbol == UNBOUND_SYMBOL:
+                raise StrategyContextError(
+                    "Symbol required for StrategyContextProvider.prepare "
+                    "(pass symbol= or set features.attrs['symbol'])",
+                )
+
+            # Context Provider is the only place that binds daily/levels/ranking.
+            context = self._context_provider.prepare(
+                strategy,
+                resolved_symbol,
+                features=features,
+            )
+            plan = strategy.execute(context)
             signals_generated = 1
             if plan.signal is SignalType.BUY:
                 buy = 1
@@ -152,12 +186,18 @@ class StrategyValidationFramework:
             )
             confidences.append(recommendation.confidence)
             holdings.append(float(recommendation.expected_holding_period))
-            # Schema / geometry already enforced by engine; extra sanity:
-            if recommendation.symbol and symbol and recommendation.symbol != symbol.upper():
+
+            if recommendation.symbol != resolved_symbol:
                 errors.append(
-                    f"symbol mismatch: recommendation={recommendation.symbol} expected={symbol}",
+                    f"symbol mismatch: recommendation={recommendation.symbol} "
+                    f"expected={resolved_symbol}",
+                )
+            if recommendation.symbol == UNBOUND_SYMBOL:
+                errors.append(
+                    "TradeRecommendation.symbol is UNKNOWN — input symbol did not propagate",
                 )
         except (
+            StrategyContextError,
             StrategyValidationError,
             StrategyEngineError,
             TradeRecommendationValidationError,
@@ -169,7 +209,6 @@ class StrategyValidationFramework:
         except Exception as exc:  # noqa: BLE001 — surface unexpected strategy bugs
             status = "FAIL"
             errors.append(f"Unexpected: {type(exc).__name__}: {exc}")
-
         if errors and status == "PASS":
             status = "FAIL"
 

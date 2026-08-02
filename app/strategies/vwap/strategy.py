@@ -187,7 +187,7 @@ class VWAPStrategy(BaseStrategy):
         setup = self._assess(features)
         confidence = build_confidence(setup, self._config.confidence_weights).total / 100.0
         return Signal(
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             timestamp=self._timestamp(features),
             signal=setup.signal,
             confidence=confidence,
@@ -221,7 +221,7 @@ class VWAPStrategy(BaseStrategy):
         setup = self._assess(features)
         if signal is None:
             signal = Signal(
-                symbol=self._config.symbol,
+                symbol=self.active_symbol,
                 timestamp=self._timestamp(features),
                 signal=setup.signal,
                 confidence=build_confidence(setup, self._config.confidence_weights).total / 100.0,
@@ -281,7 +281,7 @@ class VWAPStrategy(BaseStrategy):
 
         plan = VWAPTradePlan(
             strategy_name=self.name,
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             entry_price=entry_price,
             direction=direction,
             signal=signal.signal,
@@ -336,7 +336,7 @@ class VWAPStrategy(BaseStrategy):
                 .clip(lower=1.0)
                 * 1_000
             ).astype("int64")
-        return self._structure_service.analyze(structure_frame, symbol=self._config.symbol)
+        return self._structure_service.analyze(structure_frame, symbol=self.active_symbol)
 
     def _resolve_levels(self, frame: pd.DataFrame) -> LevelsSnapshot | None:
         if self._levels_override is not None:
@@ -347,7 +347,7 @@ class VWAPStrategy(BaseStrategy):
         if "volume" not in levels_frame.columns and self._config.volume_column in levels_frame.columns:
             levels_frame["volume"] = levels_frame[self._config.volume_column]
         try:
-            return self._levels_service.compute(levels_frame, symbol=self._config.symbol)
+            return self._levels_service.compute(levels_frame, symbol=self.active_symbol)
         except LevelsValidationError as exc:
             logger.debug("Levels unavailable for VWAP TP2: %s", exc)
             return None

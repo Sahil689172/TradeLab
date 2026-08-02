@@ -198,7 +198,7 @@ class BreakRetestStrategy(BaseStrategy):
         setup = self._assess(features)
         self._last_setup = setup
         return Signal(
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             timestamp=self._timestamp(features),
             signal=setup.signal,
             confidence=build_confidence(setup),
@@ -232,7 +232,7 @@ class BreakRetestStrategy(BaseStrategy):
         structure = self._require_structure()
         if signal is None:
             signal = Signal(
-                symbol=self._config.symbol,
+                symbol=self.active_symbol,
                 timestamp=self._timestamp(features),
                 signal=setup.signal,
                 confidence=build_confidence(setup),
@@ -273,7 +273,7 @@ class BreakRetestStrategy(BaseStrategy):
 
         plan = BreakRetestPlan(
             strategy_name=self.name,
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             entry_price=entry_price,
             direction=direction,
             signal=signal.signal,
@@ -342,7 +342,7 @@ class BreakRetestStrategy(BaseStrategy):
         frame = intraday.copy()
         if "volume" not in frame.columns and self._config.volume_column in frame.columns:
             frame = frame.rename(columns={self._config.volume_column: "volume"})
-        return self._structure_service.analyze(frame, symbol=self._config.symbol)
+        return self._structure_service.analyze(frame, symbol=self.active_symbol)
 
     def _require_structure(self) -> MarketStructureResult:
         if self._cached_structure is None:

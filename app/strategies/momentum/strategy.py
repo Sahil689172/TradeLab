@@ -140,7 +140,7 @@ class MomentumStrategy(BaseStrategy):
     def generate_signal(self, features: pd.DataFrame) -> Signal:
         setup = self._assess(features)
         return Signal(
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             timestamp=self._timestamp(features),
             signal=setup.signal,
             confidence=self._confidence(setup),
@@ -172,7 +172,7 @@ class MomentumStrategy(BaseStrategy):
         setup = self._assess(features)
         if signal is None:
             signal = Signal(
-                symbol=self._config.symbol,
+                symbol=self.active_symbol,
                 timestamp=self._timestamp(features),
                 signal=setup.signal,
                 confidence=self._confidence(setup),
@@ -214,7 +214,7 @@ class MomentumStrategy(BaseStrategy):
 
         plan = MomentumPlan(
             strategy_name=self.name,
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             entry_price=entry_price,
             direction=direction,
             signal=signal.signal,
@@ -243,7 +243,7 @@ class MomentumStrategy(BaseStrategy):
 
     def _assess(self, features: pd.DataFrame) -> MomentumSetup:
         ranking = self._require_ranking()
-        ranked = lookup_rank(ranking, self._config.symbol)
+        ranked = lookup_rank(ranking, self.active_symbol)
         if ranked is None:
             return MomentumSetup(
                 signal=SignalType.HOLD,
@@ -252,7 +252,7 @@ class MomentumStrategy(BaseStrategy):
                 relative_strength_ok=False,
                 above_vwap=False,
                 volume_healthy=False,
-                reasons=[f"{self._config.symbol} not in momentum ranking"],
+                reasons=[f"{self.active_symbol} not in momentum ranking"],
             )
 
         top = in_top_percentile(

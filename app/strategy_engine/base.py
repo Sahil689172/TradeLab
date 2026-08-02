@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
 from app.strategy_engine.models import Signal, TradePlan
+from app.strategy_engine.symbols import UNBOUND_SYMBOL, normalize_symbol
+
+if TYPE_CHECKING:
+    from app.services.strategy_context.schemas import StrategyContext
 
 
 class BaseStrategy(ABC):
@@ -15,7 +20,49 @@ class BaseStrategy(ABC):
     Strategies consume a feature DataFrame only. This foundation defines the
     lifecycle interface — validation, preparation, signal generation, and trade
     plan construction — without embedding indicator, risk, or price-action logic.
+
+    Symbol propagation
+    ------------------
+    Call ``bind_symbol`` (typically via ``StrategyRunner``) so Signal / TradePlan
+    use the input symbol instead of the config default ``UNKNOWN``. Prefer
+    ``self.active_symbol`` over ``self._config.symbol`` in concrete strategies.
+
+    Execution context
+    -----------------
+    Prefer ``execute(context)`` after ``StrategyContextProvider.prepare`` so
+    daily / levels / ranking bindings are applied outside strategy logic.
     """
+
+    def bind_symbol(self, symbol: str) -> BaseStrategy:
+        """Bind the runtime trading symbol for this strategy instance."""
+        self._runtime_symbol = normalize_symbol(symbol)
+        return self
+
+    @property
+    def active_symbol(self) -> str:
+        """Symbol that must appear on Signal / TradePlan outputs.
+
+        Precedence: runtime bind → config.symbol → ``UNKNOWN``.
+        """
+        runtime = getattr(self, "_runtime_symbol", None)
+        if runtime:
+            return str(runtime)
+        config = getattr(self, "_config", None)
+        if config is not None:
+            value = getattr(config, "symbol", None)
+            if value is not None and str(value).strip():
+                return str(value).strip().upper()
+        return UNBOUND_SYMBOL
+
+    def execute(self, context: StrategyContext) -> TradePlan:
+        """Apply prepared context and run the strategy lifecycle.
+
+        Context binding (daily / levels / rankings) is owned by
+        ``StrategyContextProvider`` — strategies stay independent of data loading.
+        """
+        from app.services.strategy_context.context_provider import StrategyContextProvider
+
+        return StrategyContextProvider().execute_context(self, context)
 
     @property
     @abstractmethod

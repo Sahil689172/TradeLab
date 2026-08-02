@@ -14,6 +14,12 @@ def test_pipeline_outputs_all_feature_groups() -> None:
 
     expected_columns = {
         "date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "adj_close",
+        "volume",
         "ema_9",
         "ema_20",
         "ema_21",

@@ -18,19 +18,23 @@ from app.strategy_engine import (
     StrategyRunner,
     StrategyValidationError,
     TradePlan,
+    attach_symbol,
 )
 from app.strategy_engine.exceptions import StrategyEngineError
 
 
-def make_features(rows: int = 5) -> pd.DataFrame:
+def make_features(rows: int = 5, *, symbol: str | None = "RELIANCE") -> pd.DataFrame:
     """Minimal feature frame used only to exercise the foundation contract."""
-    return pd.DataFrame(
+    frame = pd.DataFrame(
         {
             "date": pd.date_range("2024-01-01", periods=rows, freq="D"),
             "close": [100.0 + float(i) for i in range(rows)],
             "rsi_14": [50.0] * rows,
         },
     )
+    if symbol:
+        return attach_symbol(frame, symbol)
+    return frame
 
 
 class StubStrategy(BaseStrategy):
@@ -67,7 +71,7 @@ class StubStrategy(BaseStrategy):
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=timezone.utc)
         return Signal(
-            symbol="RELIANCE",
+            symbol=self.active_symbol,
             timestamp=timestamp,
             signal=self._signal_type,
             confidence=0.75,
@@ -77,7 +81,7 @@ class StubStrategy(BaseStrategy):
     def generate_trade_plan(self, features: pd.DataFrame, signal: Signal) -> TradePlan:
         entry_price = float(features.iloc[-1]["close"])
         return TradePlan(
-            symbol=signal.symbol,
+            symbol=self.active_symbol,
             entry_price=entry_price,
             signal=signal.signal,
             stop_loss=entry_price * 0.98,
@@ -242,7 +246,7 @@ def test_registry_clear() -> None:
 
 def test_runner_returns_trade_plan() -> None:
     runner = StrategyRunner()
-    features = make_features()
+    features = make_features(symbol="RELIANCE")
     strategy = StubStrategy()
 
     plan = runner.run(features, strategy)
@@ -251,8 +255,19 @@ def test_runner_returns_trade_plan() -> None:
     assert plan.strategy_name == "stub_strategy"
     assert plan.signal == SignalType.BUY
     assert plan.symbol == "RELIANCE"
+    assert strategy.active_symbol == "RELIANCE"
     assert plan.entry_price == float(features.iloc[-1]["close"])
     assert plan.reasons == ["stub signal"]
+
+
+def test_runner_binds_symbol_from_features() -> None:
+    runner = StrategyRunner()
+    features = make_features(symbol="INFY")
+    strategy = StubStrategy()
+    assert strategy.active_symbol == "UNKNOWN"
+    plan = runner.run(features, strategy)
+    assert plan.symbol == "INFY"
+    assert strategy.active_symbol == "INFY"
 
 
 def test_runner_rejects_empty_features() -> None:

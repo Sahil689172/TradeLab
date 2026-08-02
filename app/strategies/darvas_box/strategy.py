@@ -163,7 +163,7 @@ class DarvasBoxStrategy(BaseStrategy):
     def generate_signal(self, features: pd.DataFrame) -> Signal:
         setup = self._assess(features)
         return Signal(
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             timestamp=self._timestamp(features),
             signal=setup.signal,
             confidence=build_confidence(setup),
@@ -195,7 +195,7 @@ class DarvasBoxStrategy(BaseStrategy):
         setup = self._assess(features)
         if signal is None:
             signal = Signal(
-                symbol=self._config.symbol,
+                symbol=self.active_symbol,
                 timestamp=self._timestamp(features),
                 signal=setup.signal,
                 confidence=build_confidence(setup),
@@ -236,7 +236,7 @@ class DarvasBoxStrategy(BaseStrategy):
 
         plan = DarvasBoxPlan(
             strategy_name=self.name,
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             entry_price=entry_price,
             direction=direction,
             signal=signal.signal,

@@ -178,7 +178,7 @@ class PreviousDayBreakoutStrategy(BaseStrategy):
         confidence = build_confidence(chosen, self._config.confidence_weights).total / 100.0
 
         return Signal(
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             timestamp=timestamp,
             signal=chosen.signal,
             confidence=confidence,
@@ -214,7 +214,7 @@ class PreviousDayBreakoutStrategy(BaseStrategy):
         chosen = self._prefer_setup(long_setup, short_setup)
         if signal is None:
             signal = Signal(
-                symbol=self._config.symbol,
+                symbol=self.active_symbol,
                 timestamp=self._timestamp(features),
                 signal=chosen.signal,
                 confidence=build_confidence(chosen, self._config.confidence_weights).total / 100.0,
@@ -296,7 +296,7 @@ class PreviousDayBreakoutStrategy(BaseStrategy):
 
         plan = PreviousDayBreakoutPlan(
             strategy_name=self.name,
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             entry_price=entry_price,
             direction=direction,
             signal=signal.signal,
@@ -381,7 +381,7 @@ class PreviousDayBreakoutStrategy(BaseStrategy):
         as_of = pd.Timestamp(intraday.iloc[-1][self._config.date_column])
         return self._levels_service.compute(
             self._daily_ohlcv,
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             as_of=as_of,
         )
 
@@ -398,7 +398,7 @@ class PreviousDayBreakoutStrategy(BaseStrategy):
                 .clip(lower=1.0)
                 * 1_000
             ).astype("int64")
-        return self._structure_service.analyze(frame, symbol=self._config.symbol)
+        return self._structure_service.analyze(frame, symbol=self.active_symbol)
 
     def _require_levels(self) -> LevelsSnapshot:
         if self._cached_levels is None:

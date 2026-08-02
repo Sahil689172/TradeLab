@@ -201,7 +201,7 @@ class DonchianStrategy(BaseStrategy):
         self._last_setup = setup
         breakdown = build_confidence(setup, self._config.confidence_weights)
         return Signal(
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             timestamp=self._timestamp(features),
             signal=setup.signal,
             confidence=breakdown.total / 100.0,
@@ -250,7 +250,7 @@ class DonchianStrategy(BaseStrategy):
         breakdown = build_confidence(setup, self._config.confidence_weights)
         if signal is None:
             signal = Signal(
-                symbol=self._config.symbol,
+                symbol=self.active_symbol,
                 timestamp=self._timestamp(features),
                 signal=setup.signal,
                 confidence=breakdown.total / 100.0,
@@ -302,7 +302,7 @@ class DonchianStrategy(BaseStrategy):
 
         plan = DonchianPlan(
             strategy_name=self.name,
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             entry_price=entry_price,
             direction=direction,
             signal=signal.signal,
@@ -421,7 +421,7 @@ class DonchianStrategy(BaseStrategy):
     def _resolve_structure(self, frame: pd.DataFrame) -> MarketStructureResult:
         if self._structure_override is not None:
             return self._structure_override
-        return self._structure_service.analyze(frame, symbol=self._config.symbol)
+        return self._structure_service.analyze(frame, symbol=self.active_symbol)
 
     def _require_structure(self) -> MarketStructureResult:
         if self._cached_structure is None:

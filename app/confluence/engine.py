@@ -197,7 +197,7 @@ def _normalize_features(features: pd.DataFrame, config: ConfluenceConfig) -> pd.
             .reset_index(drop=True)
         )
 
-    # Feature-engine frames omit raw close; allow callers to pass OHLCV+features.
+    # Feature-engine frames include OHLCV + indicators (pipeline keeps source columns).
     required_any = {
         config.ema_fast_column,
         config.ema_slow_column,

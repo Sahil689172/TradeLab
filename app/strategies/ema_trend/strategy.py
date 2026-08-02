@@ -146,7 +146,7 @@ class EMATrendStrategy(BaseStrategy):
     def generate_signal(self, features: pd.DataFrame) -> Signal:
         snapshot = self._snapshot(features)
         timestamp = snapshot.timestamp
-        symbol = self._config.symbol
+        symbol = self.active_symbol
 
         if snapshot.cross_below.value:
             return Signal(
@@ -228,7 +228,7 @@ class EMATrendStrategy(BaseStrategy):
         ]
 
         plan = TradePlan(
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
             entry_price=entry_price,
             signal=signal.signal,
             stop_loss=risk_plan.stop_loss,
@@ -310,7 +310,7 @@ class EMATrendStrategy(BaseStrategy):
 
         confluence = self._confluence.evaluate(
             features=features,
-            symbol=self._config.symbol,
+            symbol=self.active_symbol,
         )
         # Map confluence (-100..100) to confidence (0..1), floored for actionable signals.
         confidence = max(0.0, min(1.0, (confluence.total_score + 100.0) / 200.0))

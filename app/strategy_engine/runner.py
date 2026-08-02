@@ -8,6 +8,7 @@ from app.core.logging import get_logger
 from app.strategy_engine.base import BaseStrategy
 from app.strategy_engine.exceptions import StrategyEngineError, StrategyValidationError
 from app.strategy_engine.models import Signal, TradePlan
+from app.strategy_engine.symbols import resolve_symbol_from_features
 
 logger = get_logger(__name__)
 
@@ -16,7 +17,8 @@ class StrategyRunner:
     """Run a single strategy against feature data and return a TradePlan.
 
     Lifecycle (no business logic):
-        validate → prepare → generate_signal → generate_trade_plan
+        bind symbol from features → validate → prepare → generate_signal →
+        generate_trade_plan
     """
 
     def run(self, features: pd.DataFrame, strategy: BaseStrategy) -> TradePlan:
@@ -24,6 +26,8 @@ class StrategyRunner:
 
         Args:
             features: Feature DataFrame produced by the feature engineering engine.
+                Symbol should be present in ``features.attrs["symbol"]`` or a
+                ``symbol`` column so it propagates into TradePlan automatically.
             strategy: Concrete ``BaseStrategy`` implementation.
 
         Returns:
@@ -46,7 +50,16 @@ class StrategyRunner:
         if features.empty:
             raise StrategyValidationError("Feature DataFrame must not be empty")
 
-        logger.info("Running strategy '%s' on %d feature rows", strategy.name, len(features))
+        symbol = resolve_symbol_from_features(features)
+        if symbol:
+            strategy.bind_symbol(symbol)
+
+        logger.info(
+            "Running strategy '%s' on %d feature rows (symbol=%s)",
+            strategy.name,
+            len(features),
+            strategy.active_symbol,
+        )
 
         strategy.validate(features)
         prepared = strategy.prepare(features)
@@ -60,6 +73,13 @@ class StrategyRunner:
                 f"Strategy '{strategy.name}' prepare() returned an empty DataFrame",
             )
 
+        # Preserve symbol attrs across prepare() copies that drop attrs
+        if symbol and resolve_symbol_from_features(prepared) is None:
+            prepared = prepared.copy(deep=False)
+            prepared.attrs = dict(getattr(features, "attrs", {}) or {})
+            prepared.attrs["symbol"] = symbol
+            strategy.bind_symbol(symbol)
+
         signal = strategy.generate_signal(prepared)
         if not isinstance(signal, Signal):
             raise StrategyEngineError(
@@ -72,6 +92,12 @@ class StrategyRunner:
             raise StrategyEngineError(
                 f"Strategy '{strategy.name}' generate_trade_plan() must return TradePlan, "
                 f"got {type(trade_plan).__name__}",
+            )
+
+        if symbol and trade_plan.symbol != symbol:
+            raise StrategyEngineError(
+                f"Strategy '{strategy.name}' dropped input symbol: "
+                f"expected {symbol!r}, got {trade_plan.symbol!r}",
             )
 
         logger.info(
