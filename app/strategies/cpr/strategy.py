@@ -32,7 +32,7 @@ from app.strategies.cpr.evaluation import (
 from app.strategies.cpr.schemas import CPRSetupAssessment, CPRTradePlan
 from app.strategy_engine.base import BaseStrategy
 from app.strategy_engine.exceptions import StrategyValidationError
-from app.strategy_engine.models import Signal, TradePlan
+from app.strategy_engine.models import Signal, SignalType, TradePlan
 
 logger = get_logger(__name__)
 
@@ -249,11 +249,30 @@ class CPRStrategy(BaseStrategy):
             classic=levels.classic_pivot,
             stop_loss=stop_loss,
             risk_reward_fallback=self._config.risk_reward_fallback,
+            min_risk_reward=self._config.min_risk_reward,
         )
+
+        # Never emit BUY/SELL with invalid RR — improve targets already tried;
+        # if risk geometry is still unusable, degrade to HOLD.
+        plan_signal = signal.signal
+        if plan_signal in {SignalType.BUY, SignalType.SELL}:
+            if realized_rr < self._config.min_risk_reward:
+                plan_signal = SignalType.HOLD
+                reasons_prefix = [
+                    (
+                        f"Degraded to HOLD: risk/reward {realized_rr:.3f} "
+                        f"< minimum {self._config.min_risk_reward:g}"
+                    ),
+                ]
+            else:
+                reasons_prefix = []
+        else:
+            reasons_prefix = []
 
         confidence_breakdown = build_confidence(setup, self._config.confidence_weights)
         exit_note = self._intraday_exit_note(features, entry_price, stop_loss, direction)
         reasons = [
+            *reasons_prefix,
             *setup.reasons,
             (
                 f"CPR Pivot={levels.cpr.pivot:.6g} BC={levels.cpr.bc:.6g} "
@@ -277,11 +296,11 @@ class CPRStrategy(BaseStrategy):
             symbol=self.active_symbol,
             entry_price=entry_price,
             direction=direction,
-            signal=signal.signal,
+            signal=plan_signal,
             stop_loss=stop_loss,
             take_profit_1=take_profit_1,
             take_profit_2=take_profit_2,
-            confidence=signal.confidence,
+            confidence=signal.confidence if plan_signal is signal.signal else min(signal.confidence, 0.45),
             risk_reward=realized_rr,
             expected_holding_bars=self._config.session_bars,
             stop_source=stop_source,

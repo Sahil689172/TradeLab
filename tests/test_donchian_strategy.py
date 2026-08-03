@@ -266,3 +266,18 @@ def test_registry_integration(config: DonchianStrategyConfig) -> None:
     plan = StrategyRunner().run(frame, registry.get("donchian"))
     assert plan.strategy_name == "donchian"
     assert plan.signal is SignalType.BUY
+
+
+def test_sell_targets_strictly_ordered(config: DonchianStrategyConfig) -> None:
+    """SELL plans must satisfy target_2 < target_1 (never equal)."""
+    rows = consolidation_then(
+        {"open": 99.0, "high": 99.5, "low": 92.0, "close": 93.0},
+    )
+    frame = _frame_from_rows(rows, rvol=2.0, ema_bullish=False)
+    strategy = build_strategy(config, trend=TrendDirection.BEARISH)
+    prepared = strategy.prepare(frame)
+    signal = strategy.generate_signal(prepared)
+    assert signal.signal is SignalType.SELL
+    plan = strategy.generate_trade_plan(prepared, signal)
+    assert plan.take_profit_1 < plan.entry_price
+    assert plan.take_profit_2 < plan.take_profit_1

@@ -68,6 +68,11 @@ class CPRStrategyConfig(BaseModel):
     relative_volume_threshold: float = Field(default=1.5, gt=0.0)
     atr_stop_multiplier: float = Field(default=2.0, gt=0.0)
     risk_reward_fallback: float = Field(default=2.0, gt=0.0)
+    min_risk_reward: float = Field(
+        default=1.0,
+        ge=0.0,
+        description="BUY/SELL plans must realize at least this RR; otherwise targets are improved or signal becomes HOLD",
+    )
     vwap_slope_lookback: int = Field(default=3, ge=1)
 
     min_history_bars: int = Field(default=20, ge=5)

@@ -211,20 +211,30 @@ class DonchianStrategy(BaseStrategy):
     def generate_trade_plan(self, features: pd.DataFrame, signal: Signal) -> TradePlan:
         detailed = self.generate_detailed_trade_plan(features, signal)
         self._last_detailed_plan = detailed
-        # Foundation TradePlan requires take_profit fields; use RR target or entry proxy
+        # Foundation TradePlan requires take_profit fields; synthesize RR geometry
+        # when open trend-following leaves TP1/TP2 unset — never set TP2 == TP1.
         tp1 = detailed.take_profit_1
         tp2 = detailed.take_profit_2
+        risk = abs(detailed.entry_price - detailed.stop_loss)
+        rr = max(self._config.risk_reward_1, 1.0)
         if tp1 is None:
-            # Open trend-following: synthesize soft targets from stop distance
-            risk = abs(detailed.entry_price - detailed.stop_loss)
             if detailed.direction is TradeDirection.LONG:
-                tp1 = detailed.entry_price + risk * max(self._config.risk_reward_1, 1.0)
-                tp2 = tp2 or detailed.entry_price + risk * max(self._config.risk_reward_1, 1.0) * 1.5
+                tp1 = detailed.entry_price + risk * rr
             else:
-                tp1 = detailed.entry_price - risk * max(self._config.risk_reward_1, 1.0)
-                tp2 = tp2 or detailed.entry_price - risk * max(self._config.risk_reward_1, 1.0) * 1.5
-        if tp2 is None:
-            tp2 = tp1
+                tp1 = detailed.entry_price - risk * rr
+        if tp2 is None or (
+            detailed.direction is TradeDirection.LONG and tp2 <= tp1
+        ) or (
+            detailed.direction is TradeDirection.SHORT and tp2 >= tp1
+        ):
+            if detailed.direction is TradeDirection.LONG:
+                tp2 = detailed.entry_price + risk * rr * 1.5
+                if tp2 <= tp1:
+                    tp2 = tp1 + max(risk * 0.5, abs(tp1 - detailed.entry_price) * 0.5, 1e-6)
+            else:
+                tp2 = detailed.entry_price - risk * rr * 1.5
+                if tp2 >= tp1:
+                    tp2 = tp1 - max(risk * 0.5, abs(detailed.entry_price - tp1) * 0.5, 1e-6)
         return TradePlan(
             symbol=detailed.symbol,
             entry_price=detailed.entry_price,

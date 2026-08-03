@@ -292,7 +292,11 @@ def select_targets(
     use_fixed_rr: bool,
     snapshot: DonchianSnapshot,
 ) -> tuple[float | None, float | None, float, str]:
-    """Open trend-following targets: optional fixed RR + trailing Donchian exit."""
+    """Open trend-following targets: optional fixed RR + trailing Donchian exit.
+
+    Target 2 must be strictly beyond Target 1 (higher for LONG, lower for SHORT).
+    The exit-channel reference is only used when it satisfies that geometry.
+    """
     if use_fixed_rr:
         take_profit_1, realized_rr = take_profit_from_risk(
             entry_price,
@@ -304,11 +308,13 @@ def select_targets(
         take_profit_1 = None
         realized_rr = 0.0
 
-    # Soft TP2 reference: opposite exit-channel extreme (trailing Donchian path)
+    # Soft TP2 reference: opposite exit-channel extreme — only if beyond TP1
     if direction is TradeDirection.LONG:
-        take_profit_2 = snapshot.exit_upper if snapshot.exit_upper > entry_price else None
+        floor = take_profit_1 if take_profit_1 is not None else entry_price
+        take_profit_2 = snapshot.exit_upper if snapshot.exit_upper > floor else None
     else:
-        take_profit_2 = snapshot.exit_lower if snapshot.exit_lower < entry_price else None
+        ceiling = take_profit_1 if take_profit_1 is not None else entry_price
+        take_profit_2 = snapshot.exit_lower if snapshot.exit_lower < ceiling else None
 
     note = (
         "Open trend-following · fixed RR + trailing Donchian / ATR exit"

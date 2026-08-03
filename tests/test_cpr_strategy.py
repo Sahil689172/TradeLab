@@ -349,3 +349,32 @@ def test_registry_integration(config: CPRStrategyConfig) -> None:
         registry.get("cpr"),
     )
     assert plan.signal is SignalType.BUY
+
+
+def test_cpr_targets_respect_minimum_risk_reward() -> None:
+    """Classic pivots that yield RR < 1 must be upgraded to the RR floor."""
+    from app.levels.schemas import ClassicPivotLevels
+    from app.risk_engine.schemas import TradeDirection
+    from app.strategies.cpr.evaluation import select_cpr_targets
+
+    # Tight R1/R2 above entry relative to a wide stop → raw RR ≪ 1
+    classic = ClassicPivotLevels(
+        pivot=100.0,
+        resistance_1=100.4,
+        resistance_2=100.6,
+        resistance_3=101.0,
+        support_1=99.0,
+        support_2=98.0,
+        support_3=97.0,
+    )
+    (tp1, _), (tp2, _), rr = select_cpr_targets(
+        direction=TradeDirection.LONG,
+        entry_price=100.0,
+        classic=classic,
+        stop_loss=98.0,  # risk = 2.0; R1 reward = 0.4 → RR = 0.2
+        risk_reward_fallback=2.0,
+        min_risk_reward=1.0,
+    )
+    assert rr >= 1.0
+    assert tp1 > 100.0
+    assert tp2 > tp1

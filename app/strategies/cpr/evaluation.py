@@ -315,9 +315,17 @@ def select_cpr_targets(
     classic: ClassicPivotLevels,
     stop_loss: float,
     risk_reward_fallback: float,
+    min_risk_reward: float = 1.0,
 ) -> tuple[tuple[float, str], tuple[float, str], float]:
-    """Targets R1/R2/R3 (long) or S1/S2/S3 (short); fallback to RR if needed."""
+    """Targets R1/R2/R3 (long) or S1/S2/S3 (short); enforce minimum RR.
+
+    Classic pivot levels are preferred when they clear ``min_risk_reward``.
+    Otherwise targets are raised/lowered to a deterministic RR floor so the
+    strategy never emits invalid BUY/SELL geometry.
+    """
     risk = abs(entry_price - stop_loss)
+    rr_floor = max(float(risk_reward_fallback), float(min_risk_reward), 1.0)
+
     if direction is TradeDirection.LONG:
         ladder = [
             (classic.resistance_1, "Classic R1"),
@@ -330,12 +338,20 @@ def select_cpr_targets(
             tp2, label2 = above[1]
         elif len(above) == 1:
             tp1, label1 = above[0]
-            tp2, label2 = entry_price + risk * risk_reward_fallback * 1.5, "Fallback extension"
+            tp2, label2 = entry_price + risk * rr_floor * 1.5, "Fallback extension"
         else:
-            tp1 = entry_price + risk * risk_reward_fallback
-            tp2 = entry_price + risk * risk_reward_fallback * 1.5
+            tp1 = entry_price + risk * rr_floor
+            tp2 = entry_price + risk * rr_floor * 1.5
             label1, label2 = "RR fallback TP1", "RR fallback TP2"
         rr = 0.0 if risk <= 0 else abs(tp1 - entry_price) / risk
+        if risk > 0 and rr < min_risk_reward:
+            tp1 = entry_price + risk * rr_floor
+            tp2 = entry_price + risk * rr_floor * 1.5
+            label1, label2 = "RR floor TP1", "RR floor TP2"
+            rr = rr_floor
+        if tp2 <= tp1:
+            tp2 = tp1 + max(risk * 0.5, abs(tp1 - entry_price) * 0.5, 1e-6)
+            label2 = "RR floor extension"
         return (tp1, label1), (tp2, label2), rr
 
     ladder = [
@@ -349,12 +365,20 @@ def select_cpr_targets(
         tp2, label2 = below[1]
     elif len(below) == 1:
         tp1, label1 = below[0]
-        tp2, label2 = entry_price - risk * risk_reward_fallback * 1.5, "Fallback extension"
+        tp2, label2 = entry_price - risk * rr_floor * 1.5, "Fallback extension"
     else:
-        tp1 = entry_price - risk * risk_reward_fallback
-        tp2 = entry_price - risk * risk_reward_fallback * 1.5
+        tp1 = entry_price - risk * rr_floor
+        tp2 = entry_price - risk * rr_floor * 1.5
         label1, label2 = "RR fallback TP1", "RR fallback TP2"
     rr = 0.0 if risk <= 0 else abs(entry_price - tp1) / risk
+    if risk > 0 and rr < min_risk_reward:
+        tp1 = entry_price - risk * rr_floor
+        tp2 = entry_price - risk * rr_floor * 1.5
+        label1, label2 = "RR floor TP1", "RR floor TP2"
+        rr = rr_floor
+    if tp2 >= tp1:
+        tp2 = tp1 - max(risk * 0.5, abs(entry_price - tp1) * 0.5, 1e-6)
+        label2 = "RR floor extension"
     return (tp1, label1), (tp2, label2), rr
 
 
