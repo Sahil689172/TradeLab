@@ -12,6 +12,7 @@ import pandas as pd
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.services.strategy_context import ContextProviderConfig, StrategyContextProvider
+from app.services.strategy_context.context_cache import ContextRunCache
 from app.services.trade_recommendation.strategy_validation import (
     StrategyValidationFramework,
 )
@@ -55,6 +56,8 @@ class UniverseValidationEngine:
         self._storage_dir = Path(storage)
         self._output_dir = Path(output)
         self._framework_factory = framework_factory or StrategyValidationFramework
+        # Shared across all symbol workers for the lifetime of this engine.
+        self._run_cache = ContextRunCache()
 
     @property
     def config(self) -> UniverseValidationConfig:
@@ -76,6 +79,7 @@ class UniverseValidationEngine:
     ) -> UniverseValidationReport:
         """Run universe validation and return a structured report."""
         wall_start = time.perf_counter()
+        self._run_cache.clear()
         resolved_symbols = resolve_universe_symbols(
             self._storage_dir,
             symbols=symbols,
@@ -208,8 +212,10 @@ class UniverseValidationEngine:
                     timeframe=self._config.timeframe,
                     storage_dir=str(self._storage_dir),
                     allow_synthetic_features=self._config.allow_synthetic,
+                    enable_context_cache=True,
                 ),
                 storage_dir=self._storage_dir,
+                run_cache=self._run_cache,
             ),
         )
         strategies = framework.resolve_strategies(strategy_names)

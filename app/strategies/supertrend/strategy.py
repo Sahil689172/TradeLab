@@ -97,6 +97,8 @@ class SuperTrendStrategy(BaseStrategy):
         self._cached_snapshot: SuperTrendSnapshot | None = None
         self._last_detailed_plan: SuperTrendPlan | None = None
         self._last_setup: SuperTrendSetup | None = None
+        self._assess_cache_key: int | None = None
+        self._assess_cache: SuperTrendSetup | None = None
 
     @property
     def name(self) -> str:
@@ -200,6 +202,8 @@ class SuperTrendStrategy(BaseStrategy):
 
         self._cached_structure = self._resolve_structure(frame)
         self._cached_levels = self._resolve_levels(frame)
+        self._assess_cache_key = None
+        self._assess_cache = None
         return frame
 
     def generate_signal(self, features: pd.DataFrame) -> Signal:
@@ -329,6 +333,10 @@ class SuperTrendStrategy(BaseStrategy):
         return plan
 
     def _assess(self, features: pd.DataFrame) -> SuperTrendSetup:
+        cache_key = id(features)
+        if self._assess_cache is not None and self._assess_cache_key == cache_key:
+            return self._assess_cache
+
         snapshot = self._cached_snapshot
         if snapshot is None:
             try:
@@ -359,7 +367,7 @@ class SuperTrendStrategy(BaseStrategy):
         atr_ok = atr_value is not None and atr_value > self._config.min_atr
 
         structure = self._require_structure()
-        return assess_supertrend_setup(
+        setup = assess_supertrend_setup(
             snapshot=snapshot,
             structure=structure,
             ema_bullish=ema_trend_bullish(
@@ -370,6 +378,9 @@ class SuperTrendStrategy(BaseStrategy):
             volume_ok=volume_ok,
             atr_ok=atr_ok,
         )
+        self._assess_cache_key = cache_key
+        self._assess_cache = setup
+        return setup
 
     def _resolve_structure(self, frame: pd.DataFrame) -> MarketStructureResult:
         if self._structure_override is not None:

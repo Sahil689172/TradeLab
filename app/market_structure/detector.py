@@ -2,6 +2,8 @@
 
 Rules are pure functions of price and a fixed ``swing_length``. No indicators,
 moving averages, or stochastic components are used.
+
+Hot paths use NumPy vectorization while preserving fractal swing semantics.
 """
 
 from __future__ import annotations
@@ -9,7 +11,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
+from numpy.lib.stride_tricks import sliding_window_view
 
 from app.market_structure.schemas import (
     StructureEvent,
@@ -48,35 +52,48 @@ def detect_raw_swings(
     if swing_length < 1:
         raise ValueError("swing_length must be >= 1")
 
-    n = len(highs)
+    high = np.asarray(highs, dtype=np.float64)
+    low = np.asarray(lows, dtype=np.float64)
+    n = len(high)
+    if n < swing_length * 2 + 1:
+        return []
+
+    window = swing_length * 2 + 1
+    high_windows = sliding_window_view(high, window)
+    low_windows = sliding_window_view(low, window)
+    center = swing_length
+    # Window start ``s`` corresponds to bar index ``s + swing_length``.
+    center_high = high_windows[:, center]
+    center_low = low_windows[:, center]
+    left_high_max = high_windows[:, :center].max(axis=1)
+    right_high_max = high_windows[:, center + 1 :].max(axis=1)
+    left_low_min = low_windows[:, :center].min(axis=1)
+    right_low_min = low_windows[:, center + 1 :].min(axis=1)
+
+    is_swing_high = (center_high > left_high_max) & (center_high > right_high_max)
+    is_swing_low = (center_low < left_low_min) & (center_low < right_low_min)
+
+    ts_values = timestamps.to_numpy()
     swings: list[_RawSwing] = []
-    for i in range(swing_length, n - swing_length):
-        left_highs = highs.iloc[i - swing_length : i]
-        right_highs = highs.iloc[i + 1 : i + swing_length + 1]
-        left_lows = lows.iloc[i - swing_length : i]
-        right_lows = lows.iloc[i + 1 : i + swing_length + 1]
-
-        high_i = float(highs.iloc[i])
-        low_i = float(lows.iloc[i])
-        ts = pd.Timestamp(timestamps.iloc[i]).to_pydatetime()
+    for offset in np.flatnonzero(is_swing_high | is_swing_low):
+        i = int(offset) + swing_length
+        ts = pd.Timestamp(ts_values[i]).to_pydatetime()
         confirmation = i + swing_length
-
-        if high_i > float(left_highs.max()) and high_i > float(right_highs.max()):
+        if is_swing_high[offset]:
             swings.append(
                 _RawSwing(
                     index=i,
-                    price=high_i,
+                    price=float(center_high[offset]),
                     swing_type=SwingType.SWING_HIGH,
                     timestamp=ts,
                     confirmation_index=confirmation,
                 ),
             )
-
-        if low_i < float(left_lows.min()) and low_i < float(right_lows.min()):
+        if is_swing_low[offset]:
             swings.append(
                 _RawSwing(
                     index=i,
-                    price=low_i,
+                    price=float(center_low[offset]),
                     swing_type=SwingType.SWING_LOW,
                     timestamp=ts,
                     confirmation_index=confirmation,
@@ -191,9 +208,16 @@ def detect_structure_events(
 
     Confirmation uses the bar **close** strictly beyond the reference swing price.
     Each swing level emits at most one break event.
+
+    Trend is maintained incrementally as swings confirm (same semantics as
+    calling ``classify_trend(confirmed)`` on every bar).
     """
     if not swings:
         return []
+
+    closes = np.asarray(frame["close"], dtype=np.float64)
+    dates = frame["date"].to_numpy()
+    n = len(closes)
 
     events: list[StructureEvent] = []
     active_high: SwingPoint | None = None
@@ -201,12 +225,13 @@ def detect_structure_events(
     broken_high_indexes: set[int] = set()
     broken_low_indexes: set[int] = set()
     confirmed: list[SwingPoint] = []
+    trend = TrendDirection.SIDEWAYS
 
     swings_by_confirmation: dict[int, list[SwingPoint]] = {}
     for swing in swings:
         swings_by_confirmation.setdefault(swing.confirmation_index, []).append(swing)
 
-    for i in range(len(frame)):
+    for i in range(n):
         if i in swings_by_confirmation:
             for swing in swings_by_confirmation[i]:
                 confirmed.append(swing)
@@ -214,13 +239,13 @@ def detect_structure_events(
                     active_high = swing
                 else:
                     active_low = swing
+            trend = classify_trend(confirmed)
 
         if active_high is None and active_low is None:
             continue
 
-        trend = classify_trend(confirmed)
-        close = float(frame.iloc[i]["close"])
-        timestamp = pd.Timestamp(frame.iloc[i]["date"]).to_pydatetime()
+        close = float(closes[i])
+        timestamp = pd.Timestamp(dates[i]).to_pydatetime()
 
         if (
             active_high is not None

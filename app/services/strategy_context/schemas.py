@@ -69,3 +69,5 @@ class ContextProviderConfig(BaseModel):
     # Minimum bars required in the latest session for ORB / intraday strategies
     min_session_bars: int = Field(default=12, ge=4)
     intraday_bar_minutes: int = Field(default=5, ge=1)
+    # Architectural cache (symbol artifacts + rankings). Does not change outputs.
+    enable_context_cache: bool = True

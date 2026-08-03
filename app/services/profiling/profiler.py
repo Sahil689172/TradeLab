@@ -24,6 +24,7 @@ from app.services.profiling.schemas import (
     StockTimingBreakdown,
     TimingStats,
 )
+from app.services.profiling.progress import ProgressReporter
 from app.services.profiling.timers import ResourceMonitor, TimingCollector, TimingRecord
 from app.services.strategy_context import (
     ContextProviderConfig,
@@ -31,6 +32,7 @@ from app.services.strategy_context import (
     StrategyContextError,
     StrategyContextProvider,
 )
+from app.services.strategy_context.context_cache import ContextRunCache
 from app.services.strategy_context.context_factory import requirements_for
 from app.services.strategy_context.schemas import ContextRequirement
 from app.services.trade_recommendation.engine import TradeRecommendationEngine
@@ -69,8 +71,14 @@ class ProfilingContextProvider(StrategyContextProvider):
         *,
         storage_dir: Path | str | None = None,
         runner: StrategyRunner | None = None,
+        run_cache: object | None = None,
     ) -> None:
-        super().__init__(config, storage_dir=storage_dir, runner=runner)
+        super().__init__(
+            config,
+            storage_dir=storage_dir,
+            runner=runner,
+            run_cache=run_cache,  # type: ignore[arg-type]
+        )
         self._collector = collector
 
     def prepare(
@@ -92,13 +100,7 @@ class ProfilingContextProvider(StrategyContextProvider):
             symbol=sym,
             strategy=strategy.name,
         ):
-            if features is not None:
-                run_features = attach_symbol(features.copy(), sym)
-                notes.append("Using caller-supplied feature frame")
-            else:
-                run_features = self._load_features(sym, notes)
-            run_features = self._sanitize_features(run_features, notes)
-            run_features = self._ensure_base_indicators(run_features, notes)
+            run_features = self._prepare_base_features(sym, features, notes)
 
         needs_daily = (
             ContextRequirement.DAILY_OHLCV in requirements
@@ -115,7 +117,7 @@ class ProfilingContextProvider(StrategyContextProvider):
                 symbol=sym,
                 strategy=strategy.name,
             ):
-                daily = self._resolve_daily(sym, run_features, notes)
+                daily = self._prepare_daily(sym, run_features, notes)
 
         if ContextRequirement.INTRADAY_FEATURES in requirements:
             with self._collector.measure(
@@ -124,7 +126,7 @@ class ProfilingContextProvider(StrategyContextProvider):
                 symbol=sym,
                 strategy=strategy.name,
             ):
-                run_features = self._ensure_session_features(
+                run_features = self._prepare_session_features(
                     run_features,
                     daily=daily,
                     symbol=sym,
@@ -140,7 +142,7 @@ class ProfilingContextProvider(StrategyContextProvider):
                 symbol=sym,
                 strategy=strategy.name,
             ):
-                levels = self._build_levels(source, sym, notes)
+                levels = self._prepare_levels(source, sym, notes)
 
         structure = None
         if ContextRequirement.MARKET_STRUCTURE in requirements:
@@ -150,7 +152,7 @@ class ProfilingContextProvider(StrategyContextProvider):
                 symbol=sym,
                 strategy=strategy.name,
             ):
-                structure = self._build_structure(run_features, sym, notes)
+                structure = self._prepare_structure(run_features, sym, notes)
 
         if ContextRequirement.VWAP_READY in requirements:
             with self._collector.measure(
@@ -159,7 +161,7 @@ class ProfilingContextProvider(StrategyContextProvider):
                 symbol=sym,
                 strategy=strategy.name,
             ):
-                run_features = self._ensure_vwap(run_features, notes)
+                run_features = self._prepare_vwap(sym, run_features, notes)
         if ContextRequirement.RELATIVE_VOLUME in requirements:
             with self._collector.measure(
                 "context",
@@ -167,7 +169,7 @@ class ProfilingContextProvider(StrategyContextProvider):
                 symbol=sym,
                 strategy=strategy.name,
             ):
-                run_features = self._ensure_relative_volume(run_features, notes)
+                run_features = self._prepare_relative_volume(sym, run_features, notes)
 
         rs_ranking = None
         if ContextRequirement.RS_RANKING in requirements:
@@ -177,7 +179,7 @@ class ProfilingContextProvider(StrategyContextProvider):
                 symbol=sym,
                 strategy=strategy.name,
             ):
-                rs_ranking = self._build_rs_ranking(
+                rs_ranking = self._prepare_rs_ranking(
                     sym,
                     daily if daily is not None else run_features,
                     notes,
@@ -191,7 +193,7 @@ class ProfilingContextProvider(StrategyContextProvider):
                 symbol=sym,
                 strategy=strategy.name,
             ):
-                momentum_ranking = self._build_momentum_ranking(
+                momentum_ranking = self._prepare_momentum_ranking(
                     sym,
                     daily if daily is not None else run_features,
                     notes,
@@ -313,6 +315,9 @@ class ValidationProfiler:
     def __init__(
         self,
         config: UniverseValidationConfig | None = None,
+        *,
+        progress: ProgressReporter | None = None,
+        show_progress: bool = True,
     ) -> None:
         settings = get_settings()
         self._config = config or UniverseValidationConfig()
@@ -322,6 +327,9 @@ class ValidationProfiler:
         self._output_dir = Path(output)
         self._collector = TimingCollector()
         self._resources = ResourceMonitor()
+        self._run_cache = ContextRunCache()
+        self._progress = progress
+        self._show_progress = show_progress
 
     @property
     def collector(self) -> TimingCollector:
@@ -339,9 +347,10 @@ class ValidationProfiler:
     ) -> PerformanceProfileReport:
         """Execute an instrumented validation pass and return the profile."""
         self._collector.clear()
+        self._run_cache.clear()
         self._resources.start()
         notes: list[str] = [
-            "Measurement only — no optimization applied.",
+            "Measurement only — architectural caches enabled when configured.",
             "Section totals are summed timings; with workers>1 they can exceed wall time.",
             "Use --workers 1 for additive section totals closest to wall clock.",
         ]
@@ -374,10 +383,17 @@ class ValidationProfiler:
             self._config.workers,
         )
 
+        progress = self._progress
+        if progress is None and self._show_progress:
+            progress = ProgressReporter(len(resolved), label="Profiling")
+            progress.start()
+
         workers = min(self._config.workers, max(1, len(resolved)))
         if workers == 1 or len(resolved) == 1:
             for symbol in resolved:
                 self._profile_symbol(symbol, strategy_names=strategy_names or ["all"])
+                if progress is not None:
+                    progress.tick(symbol)
         else:
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 futures = {
@@ -389,7 +405,10 @@ class ValidationProfiler:
                     for symbol in resolved
                 }
                 for future in as_completed(futures):
+                    symbol = futures[future]
                     future.result()
+                    if progress is not None:
+                        progress.tick(symbol)
 
         # Aggregation is unused on the per-cell validation path; record placeholder.
         self._collector.record("recommendation", "aggregation", 0.0)
@@ -418,9 +437,11 @@ class ValidationProfiler:
                 timeframe=self._config.timeframe,
                 storage_dir=str(self._storage_dir),
                 allow_synthetic_features=self._config.allow_synthetic,
+                enable_context_cache=True,
             ),
             storage_dir=self._storage_dir,
             runner=StrategyRunner(),
+            run_cache=self._run_cache,
         )
         engine = ProfilingRecommendationEngine(
             collector,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 from app.conditions import ConditionEngine
@@ -75,6 +76,7 @@ class BreakRetestEngine:
         *,
         direction: TradeDirection,
         level: float | None = None,
+        _arrays: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None = None,
     ) -> BreakRetestSequence:
         """Scan for a long (resistance) or short (support) break/retest sequence."""
         self._validate(frame)
@@ -96,6 +98,11 @@ class BreakRetestEngine:
                 reasons=["Unable to resolve break level"],
             )
 
+        if _arrays is None:
+            opens, highs, lows, closes = self._extract_arrays(frame)
+        else:
+            opens, highs, lows, closes = _arrays
+
         tolerance = abs(resolved) * self._config.retest_tolerance_pct
         broken = False
         retested = False
@@ -103,14 +110,13 @@ class BreakRetestEngine:
         break_event = None
         retest_event = None
         reasons: list[str] = []
+        n = len(closes)
 
-        for index in range(1, len(frame)):
-            prev = frame.iloc[index - 1]
-            curr = frame.iloc[index]
-            prev_close = float(prev[self._config.close_column])
-            close = float(curr[self._config.close_column])
-            high = float(curr[self._config.high_column])
-            low = float(curr[self._config.low_column])
+        for index in range(1, n):
+            prev_close = float(closes[index - 1])
+            close = float(closes[index])
+            high = float(highs[index])
+            low = float(lows[index])
 
             if not broken:
                 if detect_break(
@@ -166,14 +172,12 @@ class BreakRetestEngine:
                         successful=True,
                     )
 
-        latest = frame.iloc[-1]
-        prev_close = float(frame.iloc[-2][self._config.close_column])
         confirmation = detect_confirmation_candle(
-            open_=float(latest[self._config.open_column]),
-            high=float(latest[self._config.high_column]),
-            low=float(latest[self._config.low_column]),
-            close=float(latest[self._config.close_column]),
-            previous_close=prev_close,
+            open_=float(opens[-1]),
+            high=float(highs[-1]),
+            low=float(lows[-1]),
+            close=float(closes[-1]),
+            previous_close=float(closes[-2]),
             direction=direction,
             min_body_ratio=self._config.min_body_ratio,
         )
@@ -219,10 +223,44 @@ class BreakRetestEngine:
         resistance: float | None = None,
         support: float | None = None,
     ) -> tuple[BreakRetestSequence, BreakRetestSequence]:
-        """Scan long and short sequences in one call."""
-        long_seq = self.scan(frame, direction=TradeDirection.LONG, level=resistance)
-        short_seq = self.scan(frame, direction=TradeDirection.SHORT, level=support)
+        """Scan long and short sequences in one call (shared OHLCV arrays)."""
+        self._validate(frame)
+        arrays = self._extract_arrays(frame)
+        long_seq = self.scan(
+            frame,
+            direction=TradeDirection.LONG,
+            level=resistance,
+            _arrays=arrays,
+        )
+        short_seq = self.scan(
+            frame,
+            direction=TradeDirection.SHORT,
+            level=support,
+            _arrays=arrays,
+        )
         return long_seq, short_seq
+
+    def _extract_arrays(
+        self,
+        frame: pd.DataFrame,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        opens = np.asarray(
+            pd.to_numeric(frame[self._config.open_column], errors="coerce"),
+            dtype=np.float64,
+        )
+        highs = np.asarray(
+            pd.to_numeric(frame[self._config.high_column], errors="coerce"),
+            dtype=np.float64,
+        )
+        lows = np.asarray(
+            pd.to_numeric(frame[self._config.low_column], errors="coerce"),
+            dtype=np.float64,
+        )
+        closes = np.asarray(
+            pd.to_numeric(frame[self._config.close_column], errors="coerce"),
+            dtype=np.float64,
+        )
+        return opens, highs, lows, closes
 
     def _validate(self, frame: pd.DataFrame) -> None:
         if not isinstance(frame, pd.DataFrame) or frame.empty:

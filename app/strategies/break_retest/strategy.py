@@ -89,6 +89,8 @@ class BreakRetestStrategy(BaseStrategy):
         self._cached_structure: MarketStructureResult | None = None
         self._last_detailed_plan: BreakRetestPlan | None = None
         self._last_setup: BreakRetestSetup | None = None
+        self._assess_cache_key: int | None = None
+        self._assess_cache: BreakRetestSetup | None = None
 
     @property
     def name(self) -> str:
@@ -192,6 +194,8 @@ class BreakRetestStrategy(BaseStrategy):
             raise StrategyValidationError(str(exc)) from exc
 
         self._cached_structure = self._resolve_structure(frame)
+        self._assess_cache_key = None
+        self._assess_cache = None
         return frame
 
     def generate_signal(self, features: pd.DataFrame) -> Signal:
@@ -301,6 +305,10 @@ class BreakRetestStrategy(BaseStrategy):
         return plan
 
     def _assess(self, features: pd.DataFrame) -> BreakRetestSetup:
+        cache_key = id(features)
+        if self._assess_cache is not None and self._assess_cache_key == cache_key:
+            return self._assess_cache
+
         try:
             long_seq, short_seq = self._engine.scan_both(
                 features,
@@ -329,12 +337,15 @@ class BreakRetestStrategy(BaseStrategy):
             )
 
         structure = self._require_structure()
-        return assess_break_retest_setup(
+        setup = assess_break_retest_setup(
             long_sequence=long_seq,
             short_sequence=short_seq,
             volume_ok=volume_ok,
             structure=structure.trend,
         )
+        self._assess_cache_key = cache_key
+        self._assess_cache = setup
+        return setup
 
     def _resolve_structure(self, intraday: pd.DataFrame) -> MarketStructureResult:
         if self._structure_override is not None:

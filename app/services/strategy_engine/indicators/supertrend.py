@@ -2,6 +2,9 @@
 
 Canonical SuperTrend math lives here. ``app.exit_engine.supertrend`` re-exports
 ``compute_supertrend`` so exit rules do not duplicate the algorithm.
+
+Band / direction loops use NumPy arrays (identical recurrence to the prior
+pandas ``iloc`` implementation).
 """
 
 from __future__ import annotations
@@ -59,71 +62,74 @@ def compute_supertrend(
     if len(close) == 0:
         raise SuperTrendValidationError("Cannot compute SuperTrend on empty series")
 
-    if atr is None:
-        previous_close = close.shift(1)
-        true_range = pd.concat(
-            [
-                high - low,
-                (high - previous_close).abs(),
-                (low - previous_close).abs(),
-            ],
-            axis=1,
-        ).max(axis=1)
-        atr_series = true_range.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
-    else:
-        atr_series = pd.to_numeric(atr, errors="coerce")
+    high_arr = np.asarray(high, dtype=np.float64)
+    low_arr = np.asarray(low, dtype=np.float64)
+    close_arr = np.asarray(close, dtype=np.float64)
+    n = len(close_arr)
 
-    hl2 = (high.astype("float64") + low.astype("float64")) / 2.0
-    basic_upper = hl2 + multiplier * atr_series
-    basic_lower = hl2 - multiplier * atr_series
+    if atr is None:
+        previous_close = np.empty(n, dtype=np.float64)
+        previous_close[0] = np.nan
+        previous_close[1:] = close_arr[:-1]
+        tr = np.maximum(
+            high_arr - low_arr,
+            np.maximum(
+                np.abs(high_arr - previous_close),
+                np.abs(low_arr - previous_close),
+            ),
+        )
+        # Match pandas ewm(alpha=1/period, adjust=False, min_periods=period)
+        atr_series = (
+            pd.Series(tr, index=close.index)
+            .ewm(alpha=1 / period, adjust=False, min_periods=period)
+            .mean()
+        )
+        atr_arr = np.asarray(atr_series, dtype=np.float64)
+    else:
+        atr_arr = np.asarray(pd.to_numeric(atr, errors="coerce"), dtype=np.float64)
+
+    hl2 = (high_arr + low_arr) / 2.0
+    basic_upper = hl2 + multiplier * atr_arr
+    basic_lower = hl2 - multiplier * atr_arr
 
     final_upper = basic_upper.copy()
     final_lower = basic_lower.copy()
-    for i in range(1, len(close)):
-        if np.isnan(basic_upper.iloc[i]) or np.isnan(basic_lower.iloc[i]):
+    for i in range(1, n):
+        if np.isnan(basic_upper[i]) or np.isnan(basic_lower[i]):
             continue
-        prev_upper = final_upper.iloc[i - 1]
-        prev_lower = final_lower.iloc[i - 1]
-        prev_close = float(close.iloc[i - 1])
+        prev_upper = final_upper[i - 1]
+        prev_lower = final_lower[i - 1]
+        prev_close = float(close_arr[i - 1])
 
-        if np.isnan(prev_upper) or basic_upper.iloc[i] < prev_upper or prev_close > prev_upper:
-            final_upper.iloc[i] = basic_upper.iloc[i]
+        if np.isnan(prev_upper) or basic_upper[i] < prev_upper or prev_close > prev_upper:
+            final_upper[i] = basic_upper[i]
         else:
-            final_upper.iloc[i] = prev_upper
+            final_upper[i] = prev_upper
 
-        if np.isnan(prev_lower) or basic_lower.iloc[i] > prev_lower or prev_close < prev_lower:
-            final_lower.iloc[i] = basic_lower.iloc[i]
+        if np.isnan(prev_lower) or basic_lower[i] > prev_lower or prev_close < prev_lower:
+            final_lower[i] = basic_lower[i]
         else:
-            final_lower.iloc[i] = prev_lower
+            final_lower[i] = prev_lower
 
-    direction = pd.Series(index=close.index, dtype="float64")
-    supertrend = pd.Series(index=close.index, dtype="float64")
-    direction.iloc[0] = 1.0
-    supertrend.iloc[0] = final_lower.iloc[0]
+    direction = np.empty(n, dtype=np.float64)
+    supertrend = np.empty(n, dtype=np.float64)
+    direction[0] = 1.0
+    supertrend[0] = final_lower[0]
 
-    for i in range(1, len(close)):
-        prev_dir = direction.iloc[i - 1]
+    for i in range(1, n):
+        prev_dir = direction[i - 1]
         if np.isnan(prev_dir):
             prev_dir = 1.0
         if prev_dir <= 0:
-            if float(close.iloc[i]) > float(final_upper.iloc[i]):
-                direction.iloc[i] = 1.0
-            else:
-                direction.iloc[i] = -1.0
+            direction[i] = 1.0 if float(close_arr[i]) > float(final_upper[i]) else -1.0
         else:
-            if float(close.iloc[i]) < float(final_lower.iloc[i]):
-                direction.iloc[i] = -1.0
-            else:
-                direction.iloc[i] = 1.0
-
-        supertrend.iloc[i] = (
-            final_lower.iloc[i] if direction.iloc[i] > 0 else final_upper.iloc[i]
-        )
+            direction[i] = -1.0 if float(close_arr[i]) < float(final_lower[i]) else 1.0
+        supertrend[i] = final_lower[i] if direction[i] > 0 else final_upper[i]
 
     return pd.DataFrame(
         {
-            "supertrend": supertrend.astype("float64"),
-            "direction": direction.astype("float64"),
+            "supertrend": supertrend,
+            "direction": direction,
         },
         index=close.index,
     )
@@ -193,15 +199,22 @@ class SuperTrendService:
         )
 
     def attach(self, frame: pd.DataFrame, *, overwrite: bool = False) -> pd.DataFrame:
-        """Attach ``supertrend`` and ``supertrend_direction`` columns."""
-        out = frame.copy()
-        computed = self.compute(out)
+        """Attach ``supertrend`` and ``supertrend_direction`` columns.
+
+        When ``overwrite=True``, mutates ``frame`` in place to avoid an extra
+        full copy (callers that need isolation should copy before ``prepare``).
+        """
         if not overwrite:
+            out = frame.copy()
             if self._supertrend_column in out.columns or self._direction_column in out.columns:
                 raise SuperTrendValidationError(
                     f"Columns {self._supertrend_column!r}/{self._direction_column!r} "
                     "already present; pass overwrite=True to replace",
                 )
+        else:
+            out = frame
+
+        computed = self.compute(out)
         out[self._supertrend_column] = computed["supertrend"].to_numpy()
         out[self._direction_column] = computed["direction"].to_numpy()
         return out

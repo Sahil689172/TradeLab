@@ -96,7 +96,7 @@ def test_profile_single_symbol(ohlcv_dir: Path, tmp_path: Path) -> None:
         limit=1,
         allow_synthetic=False,
     )
-    profiler = ValidationProfiler(config)
+    profiler = ValidationProfiler(config, show_progress=False)
     report = profiler.profile(symbols=["RELIANCE"], strategy_names=["ema_trend", "vwap"])
 
     assert report.symbols == ["RELIANCE"]
@@ -140,7 +140,7 @@ def test_profile_limit_and_workers(ohlcv_dir: Path, tmp_path: Path) -> None:
         workers=2,
         limit=2,
     )
-    profiler = ValidationProfiler(config)
+    profiler = ValidationProfiler(config, show_progress=False)
     report = profiler.profile(strategy_names=["ema_trend"])
     assert len(report.symbols) == 2
     assert len(report.stock_breakdowns) == 2

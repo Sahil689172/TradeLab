@@ -4,6 +4,7 @@ from app.services.strategy_context.context_factory import (
     STRATEGY_CONTEXT_REQUIREMENTS,
     requirements_for,
 )
+from app.services.strategy_context.context_cache import ContextRunCache
 from app.services.strategy_context.context_provider import (
     StrategyContextError,
     StrategyContextProvider,
@@ -19,6 +20,7 @@ __all__ = [
     "STRATEGY_CONTEXT_REQUIREMENTS",
     "ContextProviderConfig",
     "ContextRequirement",
+    "ContextRunCache",
     "StrategyContext",
     "StrategyContextError",
     "StrategyContextProvider",

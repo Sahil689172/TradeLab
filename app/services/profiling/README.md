@@ -1,4 +1,4 @@
-# Performance Profiling (Phase A4.15)
+# Performance Profiling (Phase A4.15 / A4.16)
 
 Measurement-only instrumentation for universe strategy validation.
 
@@ -6,66 +6,63 @@ Measurement-only instrumentation for universe strategy validation.
 
 ## Purpose
 
-Identify where wall time is spent across:
+Identify where wall time is spent, then compare saved before/after profiles.
 
-1. Universe discovery  
-2. Parquet loading (OHLCV + features)  
-3. Strategy context creation (daily / VWAP / CPR / session / ranking / structure)  
-4. Per-strategy execution  
-5. Trade recommendation construction + validation  
-6. Report generation (JSON / CSV / console)  
-7. Overall wall / CPU / memory  
+## Workflow (permanent optimization report)
+
+```bat
+REM 1. Baseline profile (save as before)
+.venv\Scripts\python.exe backend\scripts\profile_validation.py --limit 20 --workers 1 --label before
+
+REM 2. Apply / keep optimizations in code
+
+REM 3. After profile
+.venv\Scripts\python.exe backend\scripts\profile_validation.py --limit 20 --workers 1 --label after
+
+REM 4. Compare existing reports only (does NOT re-run validation)
+.venv\Scripts\python.exe backend\scripts\benchmark_optimization.py
+```
+
+## Progress
+
+`profile_validation.py` prints live progress:
+
+```
+[5/100]  RELIANCE  elapsed 1m 12s  ETA 22m 40s
+[25/100] ...
+```
+
+Disable with `--no-progress`.
 
 ## Layout
 
 | File | Role |
 |------|------|
 | `timers.py` | Thread-safe `TimingCollector`, `ResourceMonitor` |
-| `schemas.py` | `PerformanceProfileReport` and related models |
-| `profiler.py` | Instrumented runner wrapping existing validation path |
-| `report.py` | Console / JSON / CSV writers |
-
-## CLI
-
-From the project root:
-
-```bat
-.venv\Scripts\python.exe backend\scripts\profile_validation.py --limit 20 --workers 1
-.venv\Scripts\python.exe backend\scripts\profile_validation.py --symbol RELIANCE --workers 1
-.venv\Scripts\python.exe backend\scripts\profile_validation.py --limit 100 --workers 4
-```
-
-### Flags
-
-| Flag | Meaning |
-|------|---------|
-| `--limit N` | Cap symbols after discovery |
-| `--symbol` | Repeatable symbol filter (or omit for all) |
-| `--workers N` | Parallel per-symbol workers (default 1 for clearer additive timings) |
-| `--strategy` | Repeatable strategy alias or `all` |
-| `--allow-synthetic` | Synthetic features when parquet missing (tests/dev) |
-| `--output-dir` | Report directory (default: settings log dir) |
-| `--storage-dir` | OHLCV parquet directory |
+| `schemas.py` | `PerformanceProfileReport` |
+| `profiler.py` | Instrumented runner |
+| `progress.py` | `[n/total]` + ETA |
+| `report.py` | Console / JSON / CSV profile writers |
+| `compare.py` | Before/after optimization comparison |
 
 ## Outputs
 
 | Artifact | Path |
 |----------|------|
-| Console | stdout |
-| JSON | `backend/data/logs/performance_profile.json` |
-| CSV | `backend/data/logs/performance_profile.csv` |
+| Profile JSON | `backend/data/logs/performance_profile.json` |
+| Labeled profile | `backend/data/logs/performance_profile_<label>.json` |
+| Optimization report | `backend/data/logs/optimization_report.json` |
+| Optimization text | `backend/data/logs/optimization_report.txt` |
 
-## Interpreting the report
+## Comparison metrics
 
-- **Hotspots** — top contributors (parquet load, context, individual strategies, recommendations). Focus optimization here next.  
-- **Per strategy** — avg / min / max / total across symbols.  
-- **Per stock** — load + context + each strategy + recommendation.  
-- **Runtime estimates** — linear extrapolation from average stock runtime to 100 / 449 / 1000 stocks.  
-- With `--workers > 1`, summed section times can exceed wall clock (parallel overlap). Prefer `--workers 1` when comparing additive section shares.
+- Total Runtime (wall)
+- Context Runtime
+- Strategy Runtime
+- Per Strategy Timing
+- Peak Memory
+- CPU Time
+- Average Stock Runtime
+- Average Strategy Runtime
 
-## Design notes
-
-- Context subtype timings come from `ProfilingContextProvider` (same assemble steps as production).  
-- Strategy execution uses `execute_context` after a timed `prepare`.  
-- Recommendation construction vs validation are timed separately.  
-- Aggregation is recorded as a zero-cost placeholder (unused on the per-cell validation path).
+Each metric shows **Before / After / Difference / Improvement %**.

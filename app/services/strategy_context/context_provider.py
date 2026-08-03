@@ -18,7 +18,6 @@ from app.core.logging import get_logger
 from app.feature_engine.indicators.momentum import compute_momentum_features
 from app.feature_engine.indicators.trend import compute_trend_features
 from app.feature_engine.indicators.volatility import compute_volatility_features
-from app.feature_engine.indicators.volume import compute_volume_features
 from app.feature_engine.strategy_frame import (
     features_include_ohlcv,
     load_strategy_features,
@@ -27,6 +26,11 @@ from app.levels import LevelsService
 from app.levels.exceptions import LevelsValidationError
 from app.market_data.utils.symbols import parquet_basename
 from app.market_structure import MarketStructureService
+from app.services.strategy_context.context_cache import (
+    ContextRunCache,
+    features_fingerprint,
+    structure_cache_key,
+)
 from app.services.strategy_context.context_factory import requirements_for
 from app.services.strategy_context.schemas import (
     ContextProviderConfig,
@@ -77,6 +81,7 @@ class StrategyContextProvider:
         structure_service: MarketStructureService | None = None,
         runner: StrategyRunner | None = None,
         storage_dir: Path | str | None = None,
+        run_cache: ContextRunCache | None = None,
     ) -> None:
         self._config = config or ContextProviderConfig()
         settings = get_settings()
@@ -93,6 +98,13 @@ class StrategyContextProvider:
             swing_length=self._config.structure_swing_length,
         )
         self._runner = runner or StrategyRunner()
+        # Shared across strategies / workers for one validation run.
+        if run_cache is not None:
+            self._run_cache: ContextRunCache | None = run_cache
+        elif self._config.enable_context_cache:
+            self._run_cache = ContextRunCache()
+        else:
+            self._run_cache = None
 
     @property
     def config(self) -> ContextProviderConfig:
@@ -101,6 +113,10 @@ class StrategyContextProvider:
     @property
     def storage_dir(self) -> Path:
         return self._storage_dir
+
+    @property
+    def run_cache(self) -> ContextRunCache | None:
+        return self._run_cache
 
     def prepare(
         self,
@@ -113,18 +129,16 @@ class StrategyContextProvider:
 
         When ``features`` is supplied (e.g. by the validation CLI), it is used as
         the strategy frame; daily / levels / rankings are still prepared here.
+
+        Shared artifacts (sanitize, daily, levels, structure, rankings) are
+        computed at most once per symbol / peer-set within a run when caching
+        is enabled. Only requirements declared for ``strategy`` are loaded.
         """
         sym = normalize_symbol(symbol)
         requirements = requirements_for(strategy.name)
         notes: list[str] = []
 
-        if features is not None:
-            run_features = attach_symbol(features.copy(), sym)
-            notes.append("Using caller-supplied feature frame")
-        else:
-            run_features = self._load_features(sym, notes)
-        run_features = self._sanitize_features(run_features, notes)
-        run_features = self._ensure_base_indicators(run_features, notes)
+        run_features = self._prepare_base_features(sym, features, notes)
 
         needs_daily = (
             ContextRequirement.DAILY_OHLCV in requirements
@@ -133,11 +147,11 @@ class StrategyContextProvider:
             or ContextRequirement.MOMENTUM_RANKING in requirements
             or ContextRequirement.INTRADAY_FEATURES in requirements
         )
-        daily = self._resolve_daily(sym, run_features, notes) if needs_daily else None
+        daily = self._prepare_daily(sym, run_features, notes) if needs_daily else None
 
         # ORB / PDB need multiple bars in the latest session; expand daily → session.
         if ContextRequirement.INTRADAY_FEATURES in requirements:
-            run_features = self._ensure_session_features(
+            run_features = self._prepare_session_features(
                 run_features,
                 daily=daily,
                 symbol=sym,
@@ -147,24 +161,28 @@ class StrategyContextProvider:
         levels = None
         if ContextRequirement.LEVELS in requirements:
             source = daily if daily is not None else run_features
-            levels = self._build_levels(source, sym, notes)
+            levels = self._prepare_levels(source, sym, notes)
 
         structure = None
         if ContextRequirement.MARKET_STRUCTURE in requirements:
-            structure = self._build_structure(run_features, sym, notes)
+            structure = self._prepare_structure(run_features, sym, notes)
 
         if ContextRequirement.VWAP_READY in requirements:
-            run_features = self._ensure_vwap(run_features, notes)
+            run_features = self._prepare_vwap(sym, run_features, notes)
         if ContextRequirement.RELATIVE_VOLUME in requirements:
-            run_features = self._ensure_relative_volume(run_features, notes)
+            run_features = self._prepare_relative_volume(sym, run_features, notes)
 
         rs_ranking = None
         if ContextRequirement.RS_RANKING in requirements:
-            rs_ranking = self._build_rs_ranking(sym, daily if daily is not None else run_features, notes)
+            rs_ranking = self._prepare_rs_ranking(
+                sym,
+                daily if daily is not None else run_features,
+                notes,
+            )
 
         momentum_ranking = None
         if ContextRequirement.MOMENTUM_RANKING in requirements:
-            momentum_ranking = self._build_momentum_ranking(
+            momentum_ranking = self._prepare_momentum_ranking(
                 sym,
                 daily if daily is not None else run_features,
                 notes,
@@ -248,6 +266,249 @@ class StrategyContextProvider:
         self.apply(strategy, context)
         return self._runner.run(context.features, strategy)
 
+    # ------------------------------------------------------------------ cached prepare helpers
+
+    def _prepare_base_features(
+        self,
+        symbol: str,
+        features: pd.DataFrame | None,
+        notes: list[str],
+    ) -> pd.DataFrame:
+        cache = self._run_cache
+        fingerprint = features_fingerprint(features) if features is not None else "load"
+        cache_key = f"{symbol}|base|{fingerprint}"
+
+        def _build() -> pd.DataFrame:
+            local_notes: list[str] = []
+            if features is not None:
+                run_features = attach_symbol(features.copy(), symbol)
+                local_notes.append("Using caller-supplied feature frame")
+            else:
+                run_features = self._load_features(symbol, local_notes)
+            run_features = self._sanitize_features(run_features, local_notes)
+            return self._ensure_base_indicators(run_features, local_notes)
+
+        if cache is None:
+            if features is not None:
+                run_features = attach_symbol(features.copy(), symbol)
+                notes.append("Using caller-supplied feature frame")
+            else:
+                run_features = self._load_features(symbol, notes)
+            run_features = self._sanitize_features(run_features, notes)
+            return self._ensure_base_indicators(run_features, notes)
+
+        artifacts = cache.symbol_artifacts(symbol)
+        if (
+            artifacts.base_features is not None
+            and getattr(artifacts, "_base_fingerprint", None) == cache_key
+        ):
+            notes.append("Reused cached sanitized features + indicators")
+            return artifacts.base_features
+
+        built = cache.get_or_build("base_features", cache_key, _build)
+        artifacts.base_features = built
+        artifacts._base_fingerprint = cache_key  # type: ignore[attr-defined]
+        notes.append("Prepared sanitized features + indicators (cached for symbol)")
+        return built
+
+    def _prepare_daily(
+        self,
+        symbol: str,
+        features: pd.DataFrame,
+        notes: list[str],
+    ) -> pd.DataFrame:
+        cache = self._run_cache
+        if cache is None:
+            return self._resolve_daily(symbol, features, notes)
+
+        artifacts = cache.symbol_artifacts(symbol)
+        if artifacts.daily is not None:
+            notes.append("Reused cached daily OHLCV")
+            return artifacts.daily
+
+        daily = cache.get_or_build(
+            "daily",
+            symbol,
+            lambda: self._resolve_daily(symbol, features, []),
+        )
+        artifacts.daily = daily
+        notes.append("Prepared daily OHLCV (cached for symbol)")
+        return daily
+
+    def _prepare_session_features(
+        self,
+        features: pd.DataFrame,
+        *,
+        daily: pd.DataFrame | None,
+        symbol: str,
+        notes: list[str],
+    ) -> pd.DataFrame:
+        cache = self._run_cache
+        if cache is None:
+            return self._ensure_session_features(
+                features,
+                daily=daily,
+                symbol=symbol,
+                notes=notes,
+            )
+
+        artifacts = cache.symbol_artifacts(symbol)
+        if artifacts.session_features is not None:
+            notes.append("Reused cached session features")
+            return artifacts.session_features
+
+        session = cache.get_or_build(
+            "session",
+            f"{symbol}|{features_fingerprint(features)}",
+            lambda: self._ensure_session_features(
+                features,
+                daily=daily,
+                symbol=symbol,
+                notes=[],
+            ),
+        )
+        artifacts.session_features = session
+        notes.append("Prepared session features (cached for symbol)")
+        return session
+
+    def _prepare_levels(self, ohlcv: pd.DataFrame, symbol: str, notes: list[str]):
+        cache = self._run_cache
+        if cache is None:
+            return self._build_levels(ohlcv, symbol, notes)
+
+        artifacts = cache.symbol_artifacts(symbol)
+        if artifacts.levels is not None:
+            notes.append("Reused cached LevelsSnapshot")
+            return artifacts.levels
+
+        levels = cache.get_or_build(
+            "levels",
+            symbol,
+            lambda: self._build_levels(ohlcv, symbol, []),
+        )
+        artifacts.levels = levels
+        notes.append("Prepared LevelsSnapshot (cached for symbol)")
+        return levels
+
+    def _prepare_structure(self, features: pd.DataFrame, symbol: str, notes: list[str]):
+        cache = self._run_cache
+        key = structure_cache_key(
+            features,
+            swing_length=self._structure.swing_length,
+        )
+        if cache is None:
+            return self._build_structure(features, symbol, notes)
+
+        artifacts = cache.symbol_artifacts(symbol)
+        cached = artifacts.structure_by_key.get(key)
+        if cached is not None:
+            notes.append("Reused cached market structure")
+            return cached
+
+        structure = cache.get_or_build(
+            "structure",
+            f"{symbol}|{key}",
+            lambda: self._build_structure(features, symbol, []),
+        )
+        artifacts.structure_by_key[key] = structure
+        notes.append("Prepared market structure (cached for symbol)")
+        return structure
+
+    def _prepare_vwap(
+        self,
+        symbol: str,
+        features: pd.DataFrame,
+        notes: list[str],
+    ) -> pd.DataFrame:
+        if "vwap" in features.columns:
+            return features
+        cache = self._run_cache
+        if cache is None:
+            return self._ensure_vwap(features, notes)
+
+        artifacts = cache.symbol_artifacts(symbol)
+        if artifacts.vwap_features is not None:
+            notes.append("Reused cached VWAP features")
+            return artifacts.vwap_features
+
+        attached = cache.get_or_build(
+            "vwap",
+            f"{symbol}|{features_fingerprint(features)}",
+            lambda: self._ensure_vwap(features, []),
+        )
+        artifacts.vwap_features = attached
+        notes.append("Prepared VWAP features (cached for symbol)")
+        return attached
+
+    def _prepare_relative_volume(
+        self,
+        symbol: str,
+        features: pd.DataFrame,
+        notes: list[str],
+    ) -> pd.DataFrame:
+        if "relative_volume_20" in features.columns:
+            return features
+        cache = self._run_cache
+        if cache is None:
+            return self._ensure_relative_volume(features, notes)
+
+        artifacts = cache.symbol_artifacts(symbol)
+        if artifacts.relative_volume_features is not None:
+            notes.append("Reused cached relative-volume features")
+            return artifacts.relative_volume_features
+
+        attached = cache.get_or_build(
+            "rvol",
+            f"{symbol}|{features_fingerprint(features)}",
+            lambda: self._ensure_relative_volume(features, []),
+        )
+        artifacts.relative_volume_features = attached
+        notes.append("Prepared relative-volume features (cached for symbol)")
+        return attached
+
+    def _prepare_rs_ranking(self, symbol: str, history: pd.DataFrame, notes: list[str]):
+        cache = self._run_cache
+        if cache is None:
+            return self._build_rs_ranking(symbol, history, notes)
+
+        config = RelativeStrengthConfig(symbol=symbol)
+        ranking_key = f"rs|{self._storage_dir}|{symbol}|{config.min_history_bars}"
+        cached = cache.get_ranking(ranking_key)
+        if cached is not None:
+            notes.append("Reused cached RS ranking")
+            return cached
+
+        ranking = cache.get_or_build_ranking(
+            ranking_key,
+            lambda: self._build_rs_ranking(symbol, history, []),
+        )
+        notes.append("Prepared RS ranking (cached for run)")
+        return ranking
+
+    def _prepare_momentum_ranking(
+        self,
+        symbol: str,
+        history: pd.DataFrame,
+        notes: list[str],
+    ):
+        cache = self._run_cache
+        if cache is None:
+            return self._build_momentum_ranking(symbol, history, notes)
+
+        config = MomentumConfig(symbol=symbol)
+        ranking_key = f"mom|{self._storage_dir}|{symbol}|{config.min_history_bars}"
+        cached = cache.get_ranking(ranking_key)
+        if cached is not None:
+            notes.append("Reused cached momentum ranking")
+            return cached
+
+        ranking = cache.get_or_build_ranking(
+            ranking_key,
+            lambda: self._build_momentum_ranking(symbol, history, []),
+        )
+        notes.append("Prepared momentum ranking (cached for run)")
+        return ranking
+
     # ------------------------------------------------------------------ loaders
 
     def _load_features(self, symbol: str, notes: list[str]) -> pd.DataFrame:
@@ -271,9 +532,13 @@ class StrategyContextProvider:
         stem = parquet_basename(symbol)
         path = self._storage_dir / f"{stem}.parquet"
         if path.exists():
-            daily = pd.read_parquet(path, engine="pyarrow")
-            notes.append(f"Loaded daily OHLCV from {path.name}")
-            return daily
+            if self._run_cache is not None:
+                daily = self._run_cache.get_or_load_parquet(path)
+            else:
+                daily = pd.read_parquet(path, engine="pyarrow")
+            if daily is not None:
+                notes.append(f"Loaded daily OHLCV from {path.name}")
+                return daily
 
         # Prefer a long synthetic daily series so Levels / RS / Momentum work
         # even when the strategy feature frame is short intraday synthetic data.
@@ -419,15 +684,21 @@ class StrategyContextProvider:
         if not missing:
             return features
         try:
-            trend = compute_trend_features(features)
-            momentum = compute_momentum_features(features)
-            volatility = compute_volatility_features(features)
-            volume = compute_volume_features(features) if "volume" in features.columns else pd.DataFrame(index=features.index)
+            generated_frames: list[pd.DataFrame] = []
+            needs_trend = any(col.startswith("ema_") or col == "adx_14" for col in missing)
+            needs_momentum = "rsi_14" in missing
+            needs_volatility = "atr_14" in missing
+            if needs_trend:
+                generated_frames.append(compute_trend_features(features))
+            if needs_momentum:
+                generated_frames.append(compute_momentum_features(features))
+            if needs_volatility:
+                generated_frames.append(compute_volatility_features(features))
         except Exception as exc:  # noqa: BLE001
             raise StrategyContextError(f"Unable to compute baseline indicators: {exc}") from exc
 
         out = features.copy()
-        for generated in (trend, momentum, volatility, volume):
+        for generated in generated_frames:
             for column in generated.columns:
                 if column not in out.columns:
                     out[column] = generated[column]
@@ -502,8 +773,13 @@ class StrategyContextProvider:
                 if stem == symbol:
                     continue
                 try:
-                    frame = pd.read_parquet(path, engine="pyarrow")
+                    if self._run_cache is not None:
+                        frame = self._run_cache.get_or_load_parquet(path)
+                    else:
+                        frame = pd.read_parquet(path, engine="pyarrow")
                 except Exception:  # noqa: BLE001
+                    continue
+                if frame is None:
                     continue
                 if "close" not in frame.columns or "date" not in frame.columns:
                     continue
