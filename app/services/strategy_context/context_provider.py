@@ -15,6 +15,10 @@ import pandas as pd
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.feature_engine.indicators.momentum import compute_momentum_features
+from app.feature_engine.indicators.trend import compute_trend_features
+from app.feature_engine.indicators.volatility import compute_volatility_features
+from app.feature_engine.indicators.volume import compute_volume_features
 from app.feature_engine.strategy_frame import (
     features_include_ohlcv,
     load_strategy_features,
@@ -42,7 +46,11 @@ from app.strategies.relative_strength.scoring import score_universe as score_rs_
 from app.strategy_engine.base import BaseStrategy
 from app.strategy_engine.models import TradePlan
 from app.strategy_engine.runner import StrategyRunner
-from app.strategy_engine.symbols import attach_symbol, normalize_symbol
+from app.strategy_engine.symbols import (
+    attach_symbol,
+    normalize_symbol,
+    resolve_symbol_from_features,
+)
 
 logger = get_logger(__name__)
 
@@ -115,6 +123,8 @@ class StrategyContextProvider:
             notes.append("Using caller-supplied feature frame")
         else:
             run_features = self._load_features(sym, notes)
+        run_features = self._sanitize_features(run_features, notes)
+        run_features = self._ensure_base_indicators(run_features, notes)
 
         needs_daily = (
             ContextRequirement.DAILY_OHLCV in requirements
@@ -366,6 +376,66 @@ class StrategyContextProvider:
             return attached
         except Exception as exc:  # noqa: BLE001
             raise StrategyContextError(f"Unable to attach relative volume: {exc}") from exc
+
+    def _sanitize_features(self, features: pd.DataFrame, notes: list[str]) -> pd.DataFrame:
+        """Normalize OHLCV dtypes and drop unusable rows before enrichment."""
+        frame = features.copy()
+        if "date" in frame.columns:
+            frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+        numeric_candidates = [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "adj_close",
+        ]
+        for column in numeric_candidates:
+            if column in frame.columns:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce")
+        if "date" in frame.columns:
+            before = len(frame)
+            subset = ["date"] + [col for col in ("open", "high", "low", "close") if col in frame.columns]
+            frame = (
+                frame.dropna(subset=subset)
+                .drop_duplicates(subset=["date"], keep="last")
+                .sort_values("date")
+                .reset_index(drop=True)
+            )
+            if "volume" in frame.columns:
+                frame = frame.loc[frame["volume"].fillna(0.0) > 0].reset_index(drop=True)
+            dropped = before - len(frame)
+            if dropped > 0:
+                notes.append(f"Sanitized feature frame by dropping {dropped} invalid rows")
+        symbol = resolve_symbol_from_features(features) or resolve_symbol_from_features(frame)
+        if symbol:
+            return attach_symbol(frame, symbol)
+        return frame
+
+    def _ensure_base_indicators(self, features: pd.DataFrame, notes: list[str]) -> pd.DataFrame:
+        """Attach common indicators required by multiple strategies if missing."""
+        required = {"ema_9", "ema_20", "ema_21", "ema_50", "adx_14", "atr_14", "rsi_14"}
+        missing = sorted(column for column in required if column not in features.columns)
+        if not missing:
+            return features
+        try:
+            trend = compute_trend_features(features)
+            momentum = compute_momentum_features(features)
+            volatility = compute_volatility_features(features)
+            volume = compute_volume_features(features) if "volume" in features.columns else pd.DataFrame(index=features.index)
+        except Exception as exc:  # noqa: BLE001
+            raise StrategyContextError(f"Unable to compute baseline indicators: {exc}") from exc
+
+        out = features.copy()
+        for generated in (trend, momentum, volatility, volume):
+            for column in generated.columns:
+                if column not in out.columns:
+                    out[column] = generated[column]
+        notes.append(
+            "Attached baseline indicators: "
+            + ", ".join(column for column in missing if column in out.columns),
+        )
+        return out
 
     def _build_rs_ranking(self, symbol: str, history: pd.DataFrame, notes: list[str]):
         config = RelativeStrengthConfig(symbol=symbol)

@@ -35,7 +35,6 @@ from app.strategies.previous_day_breakout import (
 )
 from app.strategies.relative_strength import (
     RelativeStrengthConfig,
-    RelativeStrengthScreener,
     RelativeStrengthStrategy,
     register_relative_strength_strategy,
 )
@@ -70,7 +69,6 @@ __all__ = [
     "PreviousDayBreakoutConfig",
     "PreviousDayBreakoutStrategy",
     "RelativeStrengthConfig",
-    "RelativeStrengthScreener",
     "RelativeStrengthStrategy",
     "SuperTrendStrategy",
     "SuperTrendStrategyConfig",
@@ -91,3 +89,12 @@ __all__ = [
     "register_volume_breakout_strategy",
     "register_vwap_strategy",
 ]
+
+
+def __getattr__(name: str):
+    """Lazily expose optional heavy helpers without import-time side effects."""
+    if name == "RelativeStrengthScreener":
+        from app.strategies.relative_strength import RelativeStrengthScreener
+
+        return RelativeStrengthScreener
+    raise AttributeError(name)

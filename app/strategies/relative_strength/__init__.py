@@ -1,5 +1,7 @@
 """Relative Strength strategy package (cross-sectional vs NIFTY500 — not RSI)."""
 
+from __future__ import annotations
+
 from app.strategies.relative_strength.config import RelativeStrengthConfig
 from app.strategies.relative_strength.ranking import (
     below_sell_percentile,
@@ -28,11 +30,6 @@ from app.strategies.relative_strength.scoring import (
     period_return,
     score_symbol,
     score_universe,
-)
-from app.strategies.relative_strength.screener import (
-    RelativeStrengthScreener,
-    load_sector_map,
-    load_universe_frames,
 )
 from app.strategies.relative_strength.strategy import RelativeStrengthStrategy
 
@@ -63,3 +60,21 @@ __all__ = [
     "score_symbol",
     "score_universe",
 ]
+
+
+def __getattr__(name: str):
+    """Lazily load screener helpers so core strategy imports stay lightweight."""
+    if name in {"RelativeStrengthScreener", "load_sector_map", "load_universe_frames"}:
+        from app.strategies.relative_strength.screener import (
+            RelativeStrengthScreener,
+            load_sector_map,
+            load_universe_frames,
+        )
+
+        exports = {
+            "RelativeStrengthScreener": RelativeStrengthScreener,
+            "load_sector_map": load_sector_map,
+            "load_universe_frames": load_universe_frames,
+        }
+        return exports[name]
+    raise AttributeError(name)
