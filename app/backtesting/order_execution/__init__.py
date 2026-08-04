@@ -16,19 +16,30 @@ from app.backtesting.order_execution.orders import (
 )
 from app.backtesting.order_execution.schemas import (
     AccountSnapshot,
+    ClosedTradeRecord,
     ExecutionAttempt,
     ExecutionConfig,
     ExecutionResult,
+    ExecutionSummary,
+    ExitReason,
+    FillLogEntry,
+    PositionSizingMode,
     PositionState,
+    RejectedOrderRecord,
+    RejectionReason,
     TradeLogEntry,
 )
 
 __all__ = [
     "AccountSnapshot",
+    "ClosedTradeRecord",
     "ExecutionAttempt",
     "ExecutionConfig",
     "ExecutionResult",
+    "ExecutionSummary",
+    "ExitReason",
     "Fill",
+    "FillLogEntry",
     "MarketOrder",
     "OrderConfigurationError",
     "OrderExecutionEngine",
@@ -37,7 +48,10 @@ __all__ = [
     "OrderSide",
     "OrderStatus",
     "OrderType",
+    "PositionSizingMode",
     "PositionState",
+    "RejectedOrderRecord",
+    "RejectionReason",
     "SimulatedBroker",
     "TradeLogEntry",
 ]

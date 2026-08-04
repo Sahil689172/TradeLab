@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Historical candle replay → Strategy Engine → optional Order Execution.
 
-A5.1 Replay + A5.2 simulated market fills. No portfolio analytics.
+A5.1 Replay + A5.2 / A5.2.1 simulated market fills. No portfolio analytics.
 
 Run from the project root:
 
     python backend/scripts/replay_backtest.py --symbol RELIANCE --speed fast
-    python backend/scripts/replay_backtest.py --symbol RELIANCE \\
+    python backend/scripts/replay_backtest.py --symbol RELIANCE ^
         --start-date 2022-01-01 --end-date 2022-12-31 --speed fast --execute-orders
 """
 
@@ -22,7 +22,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.backtesting.order_execution import ExecutionConfig, OrderExecutionEngine
+from app.backtesting.order_execution import (
+    ExecutionConfig,
+    OrderExecutionEngine,
+    PositionSizingMode,
+)
 from app.backtesting.replay_engine import (
     HistoricalReplayEngine,
     ReplayConfig,
@@ -106,10 +110,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Simulated starting cash (with --execute-orders)",
     )
     parser.add_argument(
+        "--position-sizing",
+        choices=[m.value for m in PositionSizingMode],
+        default=PositionSizingMode.PERCENT_OF_CAPITAL.value,
+        help="Position sizing mode (only one active)",
+    )
+    parser.add_argument(
+        "--amount",
+        type=float,
+        default=None,
+        help="Cash amount per BUY when --position-sizing fixed_amount",
+    )
+    parser.add_argument(
+        "--quantity",
+        type=float,
+        default=None,
+        help="Share quantity per BUY when --position-sizing fixed_quantity",
+    )
+    parser.add_argument(
+        "--percent",
+        type=float,
+        default=95.0,
+        help="Percent of available cash per BUY when --position-sizing percent_of_capital",
+    )
+    parser.add_argument(
         "--position-size-pct",
         type=float,
-        default=0.95,
-        help="Fraction of cash used per BUY (with --execute-orders)",
+        default=None,
+        help=argparse.SUPPRESS,  # legacy alias → percent (0–1 fraction)
     )
     parser.add_argument(
         "--slippage-bps",
@@ -124,15 +152,58 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Brokerage as fraction of notional (with --execute-orders)",
     )
     parser.add_argument(
+        "--min-confidence",
+        type=float,
+        default=None,
+        help="Reject actionable signals below this confidence (0–100)",
+    )
+    parser.add_argument(
         "--trade-log",
         default=None,
-        help="Trade log JSON path (default: logs/trade_log.json)",
+        help="Closed-trade log JSON path (default: logs/trade_log.json)",
+    )
+    parser.add_argument(
+        "--rejected-orders",
+        default=None,
+        help="Rejected-order log JSON path (default: logs/rejected_orders.json)",
+    )
+    parser.add_argument(
+        "--debug-orders",
+        action="store_true",
+        help="Print every order decision (fills and rejects)",
     )
     return parser.parse_args(argv)
 
 
 def _parse_date(value: str) -> date:
     return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def _build_execution_config(args: argparse.Namespace) -> ExecutionConfig:
+    mode = PositionSizingMode(args.position_sizing)
+    percent = float(args.percent)
+    if args.position_size_pct is not None:
+        # Legacy fraction 0–1 → percent 0–100
+        percent = float(args.position_size_pct) * 100.0
+        mode = PositionSizingMode.PERCENT_OF_CAPITAL
+
+    if mode is PositionSizingMode.FIXED_AMOUNT and args.amount is None:
+        raise SystemExit("--position-sizing fixed_amount requires --amount")
+    if mode is PositionSizingMode.FIXED_QUANTITY and args.quantity is None:
+        raise SystemExit("--position-sizing fixed_quantity requires --quantity")
+
+    return ExecutionConfig(
+        initial_capital=float(args.initial_capital),
+        position_sizing=mode,
+        amount=float(args.amount) if args.amount is not None else None,
+        quantity=float(args.quantity) if args.quantity is not None else None,
+        percent=percent,
+        slippage_bps=float(args.slippage_bps),
+        brokerage_rate=float(args.brokerage_rate),
+        allow_fractional_shares=False,
+        min_confidence=float(args.min_confidence) if args.min_confidence is not None else None,
+        close_open_at_replay_end=True,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -151,6 +222,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.trade_log
         else Path(settings.log_directory) / "trade_log.json"
     )
+    rejected_path = (
+        Path(args.rejected_orders)
+        if args.rejected_orders
+        else Path(settings.log_directory) / "rejected_orders.json"
+    )
 
     config = ReplayConfig(
         symbols=args.symbols,
@@ -168,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     print("=" * 72)
     print("TradeLab — Historical Replay Engine (A5.1)")
     if args.execute_orders:
-        print("+ Order Execution Engine (A5.2)")
+        print("+ Order Execution Engine (A5.2.1)")
     print("=" * 72)
     print(f"Storage:    {storage_dir}")
     print(f"Symbols:    {', '.join(config.symbols)}")
@@ -176,6 +252,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Start:      {config.start_date or 'beginning'}")
     print(f"End:        {config.end_date or 'latest'}")
     print(f"Speed:      {config.speed.value}")
+    if args.execute_orders:
+        print(f"Capital:    ₹{float(args.initial_capital):,.2f}")
+        print(f"Sizing:     {args.position_sizing}")
     print()
 
     engine = HistoricalReplayEngine(config)
@@ -210,41 +289,82 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Replay JSON: {output_path}")
 
     if args.execute_orders:
-        exec_config = ExecutionConfig(
-            initial_capital=float(args.initial_capital),
-            position_size_pct=float(args.position_size_pct),
-            slippage_bps=float(args.slippage_bps),
-            brokerage_rate=float(args.brokerage_rate),
+        exec_config = _build_execution_config(args)
+        execution = OrderExecutionEngine(
+            exec_config,
+            debug=bool(args.debug_orders),
         )
-        execution = OrderExecutionEngine(exec_config)
         exec_result = execution.process_replay_result(result)
-        account = exec_result.final_account
+        summary = exec_result.summary
 
         print()
-        print("--- Order Execution ---")
-        print(f"Filled:   {exec_result.orders_filled}")
-        print(f"Rejected: {exec_result.orders_rejected}")
-        print(f"Cash:     {account.cash:,.2f}")
-        print(f"Equity:   {account.equity:,.2f}")
-        print(f"Realized: {account.realized_pnl:,.2f}")
-        print(f"Unrealzd: {account.unrealized_pnl:,.2f}")
+        print("--- Order Execution Summary ---")
+        print(f"Orders Attempted:  {summary.orders_attempted}")
+        print(f"Orders Filled:     {summary.orders_filled}")
+        print(f"Orders Rejected:   {summary.orders_rejected}")
+        print(f"Win Trades:        {summary.win_trades}")
+        print(f"Loss Trades:       {summary.loss_trades}")
+        print(f"Open Positions:    {summary.open_positions}")
+        print(f"Closed Positions:  {summary.closed_positions}")
+        print(f"Current Cash:      ₹{summary.current_cash:,.2f}")
+        print(f"Current Equity:    ₹{summary.current_equity:,.2f}")
+        print(f"Largest Position:  ₹{summary.largest_position:,.2f}")
+        print(f"Largest Profit:    ₹{summary.largest_profit:,.2f}")
+        print(f"Largest Loss:      ₹{summary.largest_loss:,.2f}")
+
         print()
-        print("--- Trade Log (latest) ---")
+        print("--- Closed Trades (latest) ---")
         for row in exec_result.trade_log[-10:]:
             print(
-                f"  {row.timestamp.date()} {row.side.value} {row.symbol} "
-                f"qty={row.quantity:.4f} px={row.execution_price:.4f} "
-                f"brokerage={row.brokerage:.2f} slip={row.slippage:.2f} "
-                f"pnl={row.pnl:.2f} cash={row.remaining_cash:,.2f}",
+                f"  {row.entry_timestamp.date()}→{row.exit_timestamp.date()} "
+                f"{row.symbol} qty={row.quantity:g} "
+                f"entry={row.entry_price:.4f} exit={row.exit_price:.4f} "
+                f"net={row.net_profit:,.2f} days={row.holding_days} "
+                f"reason={row.exit_reason.value}",
             )
+
+        if exec_result.rejected_orders:
+            print()
+            print("--- Rejected Orders (latest) ---")
+            for row in exec_result.rejected_orders[-10:]:
+                side = row.side.value if row.side else "N/A"
+                px = f"{row.requested_price:.4f}" if row.requested_price else "n/a"
+                print(
+                    f"  {row.timestamp.date()} {side} {row.symbol} "
+                    f"px={px} reason={row.reason}",
+                )
+
+        trade_payload = {
+            "summary": exec_result.summary.model_dump(mode="json"),
+            "config": exec_result.config.model_dump(mode="json"),
+            "trade_log": [t.model_dump(mode="json") for t in exec_result.trade_log],
+            "fill_log": [f.model_dump(mode="json") for f in exec_result.fill_log],
+            "final_account": exec_result.final_account.model_dump(mode="json"),
+            "orders_filled": exec_result.orders_filled,
+            "orders_rejected": exec_result.orders_rejected,
+            "started_at": exec_result.started_at.isoformat(),
+            "completed_at": exec_result.completed_at.isoformat(),
+        }
+        rejected_payload = {
+            "count": len(exec_result.rejected_orders),
+            "rejected_orders": [
+                r.model_dump(mode="json") for r in exec_result.rejected_orders
+            ],
+        }
 
         trade_log_path.parent.mkdir(parents=True, exist_ok=True)
         trade_log_path.write_text(
-            json.dumps(exec_result.model_dump(mode="json"), indent=2, default=str) + "\n",
+            json.dumps(trade_payload, indent=2, default=str) + "\n",
+            encoding="utf-8",
+        )
+        rejected_path.parent.mkdir(parents=True, exist_ok=True)
+        rejected_path.write_text(
+            json.dumps(rejected_payload, indent=2, default=str) + "\n",
             encoding="utf-8",
         )
         print()
-        print(f"Trade log JSON: {trade_log_path}")
+        print(f"Trade log JSON:      {trade_log_path}")
+        print(f"Rejected orders JSON: {rejected_path}")
 
     return 1 if result.errors and not result.steps else 0
 

@@ -6,7 +6,12 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from app.backtesting.order_execution.orders import Fill, MarketOrder
-from app.backtesting.order_execution.schemas import AccountSnapshot, TradeLogEntry
+from app.backtesting.order_execution.schemas import (
+    AccountSnapshot,
+    ClosedTradeRecord,
+    FillLogEntry,
+    TradeLogEntry,
+)
 from app.services.trade_recommendation.schemas import TradeRecommendation
 
 
@@ -25,6 +30,14 @@ class BrokerPort(Protocol):
 
     @property
     def trade_log(self) -> list[TradeLogEntry]:
+        ...
+
+    @property
+    def fill_log(self) -> list[FillLogEntry]:
+        ...
+
+    @property
+    def closed_trades(self) -> list[ClosedTradeRecord]:
         ...
 
 
