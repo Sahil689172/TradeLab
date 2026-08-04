@@ -1,9 +1,15 @@
-"""Historical Replay Engine — feed candles to the Strategy Engine without look-ahead.
+"""Historical backtesting building blocks (replay + order execution).
 
 Package layout lives under ``app/backtesting/`` (TradeLab convention). There is no
 ``backend/app/`` package in this repository.
 """
 
+from app.backtesting.order_execution import (
+    ExecutionConfig,
+    OrderExecutionEngine,
+    SimulatedBroker,
+    TradeLogEntry,
+)
 from app.backtesting.replay_engine.engine import HistoricalReplayEngine
 from app.backtesting.replay_engine.events import (
     NewCandle,
@@ -24,15 +30,17 @@ from app.backtesting.replay_engine.replay_session import ReplaySession
 from app.backtesting.replay_engine.schemas import (
     ReplayConfig,
     ReplayResult,
-    ReplayStepResult,
     ReplaySpeed,
+    ReplayStepResult,
 )
 from app.backtesting.replay_engine.scheduler import ReplayScheduler
 from app.backtesting.replay_engine.state import ReplayStatus
 
 __all__ = [
+    "ExecutionConfig",
     "HistoricalReplayEngine",
     "NewCandle",
+    "OrderExecutionEngine",
     "RecommendationGenerated",
     "ReplayCompleted",
     "ReplayConfig",
@@ -49,5 +57,7 @@ __all__ = [
     "ReplayStarted",
     "ReplayStatus",
     "ReplayStepResult",
+    "SimulatedBroker",
     "StrategyEvaluation",
+    "TradeLogEntry",
 ]
