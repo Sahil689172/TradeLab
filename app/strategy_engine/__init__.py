@@ -7,6 +7,12 @@ from app.strategy_engine.exceptions import (
     StrategyRegistrationError,
     StrategyValidationError,
 )
+from app.strategy_engine.audit import (
+    StrategyAuditReport,
+    StrategyAuditor,
+    export_audit,
+    format_audit_report,
+)
 from app.strategy_engine.configuration import (
     StrategySystemConfig,
     load_strategy_config,
@@ -32,6 +38,8 @@ __all__ = [
     "FilterRegistry",
     "Signal",
     "SignalType",
+    "StrategyAuditReport",
+    "StrategyAuditor",
     "StrategyEngineError",
     "StrategyNotFoundError",
     "StrategyRecommendation",
@@ -43,6 +51,8 @@ __all__ = [
     "TradePlan",
     "attach_symbol",
     "build_strategy_from_config",
+    "export_audit",
+    "format_audit_report",
     "load_strategy_config",
     "resolve_symbol_from_features",
 ]
