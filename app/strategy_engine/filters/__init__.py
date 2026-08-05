@@ -1,10 +1,15 @@
-"""Strategy Filter Framework — A4X.1 framework + A4X.2/A4X.3 filters.
+"""Strategy Filter Framework — A4X.1–A4X.4 filters.
 
 Package path: ``app/strategy_engine/filters/`` (TradeLab convention).
 Strategies never import concrete filters — inject them via ``FilterRegistry``.
 """
 
 from app.strategy_engine.filters.adx import ADXFilter, ADXFilterConfig
+from app.strategy_engine.filters.atr_stop import ATRStopFilter, ATRStopFilterConfig
+from app.strategy_engine.filters.atr_trailing_stop import (
+    ATRTrailingStopFilter,
+    ATRTrailingStopFilterConfig,
+)
 from app.strategy_engine.filters.base import BaseStrategyFilter, FilterBase
 from app.strategy_engine.filters.ema200 import EMA200Filter, EMA200FilterConfig
 from app.strategy_engine.filters.exceptions import (
@@ -14,8 +19,25 @@ from app.strategy_engine.filters.exceptions import (
     FilterValidationError,
     StrategyFilterError,
 )
+from app.strategy_engine.filters.fixed_stop import FixedStopFilter, FixedStopFilterConfig
 from app.strategy_engine.filters.gap import GapFilter, GapFilterConfig
 from app.strategy_engine.filters.liquidity import LiquidityFilter, LiquidityFilterConfig
+from app.strategy_engine.filters.maximum_drawdown import (
+    MaximumDrawdownFilter,
+    MaximumDrawdownFilterConfig,
+)
+from app.strategy_engine.filters.maximum_portfolio_exposure import (
+    MaximumPortfolioExposureFilter,
+    MaximumPortfolioExposureFilterConfig,
+)
+from app.strategy_engine.filters.minimum_confidence import (
+    MinimumConfidenceFilter,
+    MinimumConfidenceFilterConfig,
+)
+from app.strategy_engine.filters.minimum_position_size import (
+    MinimumPositionSizeFilter,
+    MinimumPositionSizeFilterConfig,
+)
 from app.strategy_engine.filters.minimum_volume import (
     MinimumVolumeFilter,
     MinimumVolumeFilterConfig,
@@ -35,6 +57,7 @@ from app.strategy_engine.filters.relative_volume import (
     RelativeVolumeFilter,
     RelativeVolumeFilterConfig,
 )
+from app.strategy_engine.filters.risk_reward import RiskRewardFilter, RiskRewardFilterConfig
 from app.strategy_engine.filters.schemas import (
     FilterConfig,
     FilterStepResult,
@@ -68,6 +91,10 @@ from app.strategy_engine.filters.vwap_confirmation import (
 __all__ = [
     "ADXFilter",
     "ADXFilterConfig",
+    "ATRStopFilter",
+    "ATRStopFilterConfig",
+    "ATRTrailingStopFilter",
+    "ATRTrailingStopFilterConfig",
     "BaseStrategyFilter",
     "EMA200Filter",
     "EMA200FilterConfig",
@@ -82,10 +109,20 @@ __all__ = [
     "FilterRegistryPort",
     "FilterStepResult",
     "FilterValidationError",
+    "FixedStopFilter",
+    "FixedStopFilterConfig",
     "GapFilter",
     "GapFilterConfig",
     "LiquidityFilter",
     "LiquidityFilterConfig",
+    "MaximumDrawdownFilter",
+    "MaximumDrawdownFilterConfig",
+    "MaximumPortfolioExposureFilter",
+    "MaximumPortfolioExposureFilterConfig",
+    "MinimumConfidenceFilter",
+    "MinimumConfidenceFilterConfig",
+    "MinimumPositionSizeFilter",
+    "MinimumPositionSizeFilterConfig",
     "MinimumVolumeFilter",
     "MinimumVolumeFilterConfig",
     "OBVConfirmationFilter",
@@ -93,6 +130,8 @@ __all__ = [
     "PipelineResult",
     "RelativeVolumeFilter",
     "RelativeVolumeFilterConfig",
+    "RiskRewardFilter",
+    "RiskRewardFilterConfig",
     "SMA200Filter",
     "SMA200FilterConfig",
     "SidewaysMarketFilter",
