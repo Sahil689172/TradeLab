@@ -1,4 +1,4 @@
-"""Strategy engine foundation — contracts, registry, and runner."""
+"""Strategy engine foundation — contracts, registry, runner, and filters."""
 
 from app.strategy_engine.base import BaseStrategy
 from app.strategy_engine.exceptions import (
@@ -7,6 +7,12 @@ from app.strategy_engine.exceptions import (
     StrategyRegistrationError,
     StrategyValidationError,
 )
+from app.strategy_engine.filters import (
+    BaseStrategyFilter,
+    FilterPipeline,
+    FilterRegistry,
+    StrategyRecommendation,
+)
 from app.strategy_engine.models import Signal, SignalType, TradePlan
 from app.strategy_engine.registry import StrategyRegistry
 from app.strategy_engine.runner import StrategyRunner
@@ -14,10 +20,14 @@ from app.strategy_engine.symbols import attach_symbol, resolve_symbol_from_featu
 
 __all__ = [
     "BaseStrategy",
+    "BaseStrategyFilter",
+    "FilterPipeline",
+    "FilterRegistry",
     "Signal",
     "SignalType",
     "StrategyEngineError",
     "StrategyNotFoundError",
+    "StrategyRecommendation",
     "StrategyRegistrationError",
     "StrategyRegistry",
     "StrategyRunner",
