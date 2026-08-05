@@ -44,6 +44,7 @@ class OpeningRangeBreakoutConfig(BaseModel):
     enable_filter_pipeline: bool = False
     filter_enable_optional: tuple[str, ...] = ()
     filter_disable: tuple[str, ...] = ()
+    filter_param_overrides: dict[str, dict] = {}
     symbol: str = Field(default="UNKNOWN", min_length=1, max_length=32)
 
     # Timeframe / OR window — never hardcode a single OR length.

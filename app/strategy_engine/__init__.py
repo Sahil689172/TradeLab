@@ -7,6 +7,11 @@ from app.strategy_engine.exceptions import (
     StrategyRegistrationError,
     StrategyValidationError,
 )
+from app.strategy_engine.configuration import (
+    StrategySystemConfig,
+    load_strategy_config,
+    build_strategy_from_config,
+)
 from app.strategy_engine.filters import (
     BaseStrategyFilter,
     FilterBase,
@@ -33,8 +38,11 @@ __all__ = [
     "StrategyRegistrationError",
     "StrategyRegistry",
     "StrategyRunner",
+    "StrategySystemConfig",
     "StrategyValidationError",
     "TradePlan",
     "attach_symbol",
+    "build_strategy_from_config",
+    "load_strategy_config",
     "resolve_symbol_from_features",
 ]
