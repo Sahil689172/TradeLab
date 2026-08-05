@@ -8,11 +8,13 @@ from app.strategy_engine.filters.exceptions import FilterRegistrationError
 from app.strategy_engine.filters.schemas import StrategyRecommendation
 
 
-class BaseStrategyFilter(ABC):
+class FilterBase(ABC):
     """Reusable filter contract: ``name``, ``enabled``, ``priority``, validate/apply.
 
     Concrete filters (A4X.2+) subclass this. Strategies must not import filter
     implementations — only the pipeline consumes filters.
+
+    ``BaseStrategyFilter`` is retained as a compatibility alias.
     """
 
     def __init__(
@@ -66,3 +68,7 @@ class BaseStrategyFilter(ABC):
     @abstractmethod
     def apply(self, recommendation: StrategyRecommendation) -> StrategyRecommendation:
         """Transform or annotate ``recommendation`` and return the result."""
+
+
+# A4X.1 compatibility alias
+BaseStrategyFilter = FilterBase

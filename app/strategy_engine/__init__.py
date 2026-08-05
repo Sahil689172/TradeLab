@@ -9,6 +9,7 @@ from app.strategy_engine.exceptions import (
 )
 from app.strategy_engine.filters import (
     BaseStrategyFilter,
+    FilterBase,
     FilterPipeline,
     FilterRegistry,
     StrategyRecommendation,
@@ -21,6 +22,7 @@ from app.strategy_engine.symbols import attach_symbol, resolve_symbol_from_featu
 __all__ = [
     "BaseStrategy",
     "BaseStrategyFilter",
+    "FilterBase",
     "FilterPipeline",
     "FilterRegistry",
     "Signal",

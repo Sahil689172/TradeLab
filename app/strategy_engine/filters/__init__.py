@@ -1,13 +1,12 @@
-"""Strategy Filter Framework (Phase A4X.1) — framework only, no concrete filters.
+"""Strategy Filter Framework (A4X.1) + Trend & Regime Filters (A4X.2).
 
 Package path: ``app/strategy_engine/filters/`` (TradeLab convention).
-There is no ``backend/app/`` package in this repository.
-
-Strategies never import filters. Callers inject a ``FilterRegistry`` into
-``FilterPipeline`` and pass a ``StrategyRecommendation``.
+Strategies never import concrete filters — inject them via ``FilterRegistry``.
 """
 
-from app.strategy_engine.filters.base import BaseStrategyFilter
+from app.strategy_engine.filters.adx import ADXFilter, ADXFilterConfig
+from app.strategy_engine.filters.base import BaseStrategyFilter, FilterBase
+from app.strategy_engine.filters.ema200 import EMA200Filter, EMA200FilterConfig
 from app.strategy_engine.filters.exceptions import (
     FilterNotFoundError,
     FilterPipelineError,
@@ -28,9 +27,28 @@ from app.strategy_engine.filters.schemas import (
     PipelineResult,
     StrategyRecommendation,
 )
+from app.strategy_engine.filters.sideways_market import (
+    SidewaysMarketFilter,
+    SidewaysMarketFilterConfig,
+)
+from app.strategy_engine.filters.sma200 import SMA200Filter, SMA200FilterConfig
+from app.strategy_engine.filters.trending_market import (
+    TrendingMarketFilter,
+    TrendingMarketFilterConfig,
+)
+from app.strategy_engine.filters.volatility_regime import (
+    VolatilityRegime,
+    VolatilityRegimeFilter,
+    VolatilityRegimeFilterConfig,
+)
 
 __all__ = [
+    "ADXFilter",
+    "ADXFilterConfig",
     "BaseStrategyFilter",
+    "EMA200Filter",
+    "EMA200FilterConfig",
+    "FilterBase",
     "FilterConfig",
     "FilterNotFoundError",
     "FilterPipeline",
@@ -42,7 +60,16 @@ __all__ = [
     "FilterStepResult",
     "FilterValidationError",
     "PipelineResult",
+    "SMA200Filter",
+    "SMA200FilterConfig",
+    "SidewaysMarketFilter",
+    "SidewaysMarketFilterConfig",
     "StrategyFilterError",
     "StrategyFilterPort",
     "StrategyRecommendation",
+    "TrendingMarketFilter",
+    "TrendingMarketFilterConfig",
+    "VolatilityRegime",
+    "VolatilityRegimeFilter",
+    "VolatilityRegimeFilterConfig",
 ]
