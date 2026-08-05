@@ -1,7 +1,8 @@
-"""Strategy Filter Framework — A4X.1–A4X.4 filters.
+"""Strategy Filter Framework — A4X.1–A4X.5 filters.
 
 Package path: ``app/strategy_engine/filters/`` (TradeLab convention).
 Strategies never import concrete filters — inject them via ``FilterRegistry``.
+Strategies may call ``request_confirmations`` to opt into HTF checks.
 """
 
 from app.strategy_engine.filters.adx import ADXFilter, ADXFilterConfig
@@ -11,6 +12,22 @@ from app.strategy_engine.filters.atr_trailing_stop import (
     ATRTrailingStopFilterConfig,
 )
 from app.strategy_engine.filters.base import BaseStrategyFilter, FilterBase
+from app.strategy_engine.filters.confirmation import (
+    ALL_HTF_CONFIRMATIONS,
+    DAILY,
+    HTF_TREND,
+    HTFConfirmationRequest,
+    MTF_EMA,
+    MTF_RSI,
+    MTF_SUPERTREND,
+    WEEKLY,
+    request_confirmations,
+    requested_confirmations,
+)
+from app.strategy_engine.filters.daily_confirmation import (
+    DailyConfirmationFilter,
+    DailyConfirmationFilterConfig,
+)
 from app.strategy_engine.filters.ema200 import EMA200Filter, EMA200FilterConfig
 from app.strategy_engine.filters.exceptions import (
     FilterNotFoundError,
@@ -21,6 +38,10 @@ from app.strategy_engine.filters.exceptions import (
 )
 from app.strategy_engine.filters.fixed_stop import FixedStopFilter, FixedStopFilterConfig
 from app.strategy_engine.filters.gap import GapFilter, GapFilterConfig
+from app.strategy_engine.filters.higher_timeframe_trend import (
+    HigherTimeframeTrendFilter,
+    HigherTimeframeTrendFilterConfig,
+)
 from app.strategy_engine.filters.liquidity import LiquidityFilter, LiquidityFilterConfig
 from app.strategy_engine.filters.maximum_drawdown import (
     MaximumDrawdownFilter,
@@ -41,6 +62,18 @@ from app.strategy_engine.filters.minimum_position_size import (
 from app.strategy_engine.filters.minimum_volume import (
     MinimumVolumeFilter,
     MinimumVolumeFilterConfig,
+)
+from app.strategy_engine.filters.multi_timeframe_ema import (
+    MultiTimeframeEMAFilter,
+    MultiTimeframeEMAFilterConfig,
+)
+from app.strategy_engine.filters.multi_timeframe_rsi import (
+    MultiTimeframeRSIFilter,
+    MultiTimeframeRSIFilterConfig,
+)
+from app.strategy_engine.filters.multi_timeframe_supertrend import (
+    MultiTimeframeSuperTrendFilter,
+    MultiTimeframeSuperTrendFilterConfig,
 )
 from app.strategy_engine.filters.obv_confirmation import (
     OBVConfirmationFilter,
@@ -87,15 +120,23 @@ from app.strategy_engine.filters.vwap_confirmation import (
     VWAPConfirmationFilter,
     VWAPConfirmationFilterConfig,
 )
+from app.strategy_engine.filters.weekly_confirmation import (
+    WeeklyConfirmationFilter,
+    WeeklyConfirmationFilterConfig,
+)
 
 __all__ = [
     "ADXFilter",
     "ADXFilterConfig",
+    "ALL_HTF_CONFIRMATIONS",
     "ATRStopFilter",
     "ATRStopFilterConfig",
     "ATRTrailingStopFilter",
     "ATRTrailingStopFilterConfig",
     "BaseStrategyFilter",
+    "DAILY",
+    "DailyConfirmationFilter",
+    "DailyConfirmationFilterConfig",
     "EMA200Filter",
     "EMA200FilterConfig",
     "FilterBase",
@@ -113,8 +154,15 @@ __all__ = [
     "FixedStopFilterConfig",
     "GapFilter",
     "GapFilterConfig",
+    "HTFConfirmationRequest",
+    "HTF_TREND",
+    "HigherTimeframeTrendFilter",
+    "HigherTimeframeTrendFilterConfig",
     "LiquidityFilter",
     "LiquidityFilterConfig",
+    "MTF_EMA",
+    "MTF_RSI",
+    "MTF_SUPERTREND",
     "MaximumDrawdownFilter",
     "MaximumDrawdownFilterConfig",
     "MaximumPortfolioExposureFilter",
@@ -125,6 +173,12 @@ __all__ = [
     "MinimumPositionSizeFilterConfig",
     "MinimumVolumeFilter",
     "MinimumVolumeFilterConfig",
+    "MultiTimeframeEMAFilter",
+    "MultiTimeframeEMAFilterConfig",
+    "MultiTimeframeRSIFilter",
+    "MultiTimeframeRSIFilterConfig",
+    "MultiTimeframeSuperTrendFilter",
+    "MultiTimeframeSuperTrendFilterConfig",
     "OBVConfirmationFilter",
     "OBVConfirmationFilterConfig",
     "PipelineResult",
@@ -150,4 +204,9 @@ __all__ = [
     "VolatilityRegimeFilterConfig",
     "VolumeSMAFilter",
     "VolumeSMAFilterConfig",
+    "WEEKLY",
+    "WeeklyConfirmationFilter",
+    "WeeklyConfirmationFilterConfig",
+    "request_confirmations",
+    "requested_confirmations",
 ]
