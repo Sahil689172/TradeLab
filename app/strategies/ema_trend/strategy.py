@@ -23,6 +23,7 @@ from app.risk_engine import RiskConfig, RiskEngine, StopMethod, TradeDirection
 from app.strategies.ema_trend.config import EMATrendConfig
 from app.strategy_engine.base import BaseStrategy
 from app.strategy_engine.exceptions import StrategyValidationError
+from app.strategy_engine.filters.strategy_profiles import STRATEGY_FILTER_PROFILES
 from app.strategy_engine.models import Signal, SignalType, TradePlan
 
 logger = get_logger(__name__)
@@ -30,6 +31,8 @@ logger = get_logger(__name__)
 
 class EMATrendStrategy(BaseStrategy):
     """EMA20/EMA50 trend-following strategy with ATR risk and confluence confidence."""
+
+    FILTER_PROFILE = STRATEGY_FILTER_PROFILES["ema_trend"]
 
     def __init__(
         self,

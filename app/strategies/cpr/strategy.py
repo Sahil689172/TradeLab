@@ -32,6 +32,7 @@ from app.strategies.cpr.evaluation import (
 from app.strategies.cpr.schemas import CPRSetupAssessment, CPRTradePlan
 from app.strategy_engine.base import BaseStrategy
 from app.strategy_engine.exceptions import StrategyValidationError
+from app.strategy_engine.filters.strategy_profiles import STRATEGY_FILTER_PROFILES
 from app.strategy_engine.models import Signal, SignalType, TradePlan
 
 logger = get_logger(__name__)
@@ -39,6 +40,8 @@ logger = get_logger(__name__)
 
 class CPRStrategy(BaseStrategy):
     """Standalone CPR strategy (trend on narrow, reversal on wide)."""
+
+    FILTER_PROFILE = STRATEGY_FILTER_PROFILES["cpr"]
 
     def __init__(
         self,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
@@ -12,6 +12,7 @@ from app.strategy_engine.symbols import UNBOUND_SYMBOL, normalize_symbol
 
 if TYPE_CHECKING:
     from app.services.strategy_context.schemas import StrategyContext
+    from app.strategy_engine.filters.profiles import StrategyFilterProfile
 
 
 class BaseStrategy(ABC):
@@ -21,16 +22,12 @@ class BaseStrategy(ABC):
     lifecycle interface — validation, preparation, signal generation, and trade
     plan construction — without embedding indicator, risk, or price-action logic.
 
-    Symbol propagation
-    ------------------
-    Call ``bind_symbol`` (typically via ``StrategyRunner``) so Signal / TradePlan
-    use the input symbol instead of the config default ``UNKNOWN``. Prefer
-    ``self.active_symbol`` over ``self._config.symbol`` in concrete strategies.
-
-    Execution context
-    -----------------
-    Prefer ``execute(context)`` after ``StrategyContextProvider.prepare`` so
-    daily / levels / ranking bindings are applied outside strategy logic.
+    Filter pipeline (A4X.6)
+    -----------------------
+    Strategies declare a ``filter_profile`` (mandatory / optional / default /
+    configurable). Raw signal logic is unchanged. ``StrategyRunner`` applies the
+    pipeline only when ``filter_pipeline_enabled`` is True (default False for
+    backwards compatibility).
     """
 
     def bind_symbol(self, symbol: str) -> BaseStrategy:
@@ -53,6 +50,39 @@ class BaseStrategy(ABC):
             if value is not None and str(value).strip():
                 return str(value).strip().upper()
         return UNBOUND_SYMBOL
+
+    @property
+    def filter_profile(self) -> StrategyFilterProfile:
+        """Research-default filter profile for this strategy (overridable)."""
+        declared = getattr(type(self), "FILTER_PROFILE", None)
+        if declared is not None:
+            return declared
+        from app.strategy_engine.filters.strategy_profiles import get_strategy_filter_profile
+
+        return get_strategy_filter_profile(self.name)
+
+    @property
+    def filter_pipeline_enabled(self) -> bool:
+        """When True, StrategyRunner runs the filter pipeline after TradePlan."""
+        config = getattr(self, "_config", None)
+        if config is not None and hasattr(config, "enable_filter_pipeline"):
+            return bool(getattr(config, "enable_filter_pipeline"))
+        return False
+
+    @property
+    def filter_pipeline_options(self) -> dict[str, Any]:
+        """Optional enable_optional / disable / param_overrides from config."""
+        config = getattr(self, "_config", None)
+        if config is None:
+            return {}
+        options: dict[str, Any] = {}
+        if hasattr(config, "filter_enable_optional"):
+            options["enable_optional"] = set(getattr(config, "filter_enable_optional") or ())
+        if hasattr(config, "filter_disable"):
+            options["disable"] = set(getattr(config, "filter_disable") or ())
+        if hasattr(config, "filter_param_overrides"):
+            options["param_overrides"] = dict(getattr(config, "filter_param_overrides") or {})
+        return options
 
     def execute(self, context: StrategyContext) -> TradePlan:
         """Apply prepared context and run the strategy lifecycle.

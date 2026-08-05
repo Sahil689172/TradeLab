@@ -36,6 +36,7 @@ from app.strategies.break_retest.evaluation import (
 from app.strategies.break_retest.schemas import BreakRetestPlan, BreakRetestSetup
 from app.strategy_engine.base import BaseStrategy
 from app.strategy_engine.exceptions import StrategyValidationError
+from app.strategy_engine.filters.strategy_profiles import STRATEGY_FILTER_PROFILES
 from app.strategy_engine.models import Signal, TradePlan
 
 logger = get_logger(__name__)
@@ -43,6 +44,8 @@ logger = get_logger(__name__)
 
 class BreakRetestStrategy(BaseStrategy):
     """Resistance/support break → retest → confirmation strategy."""
+
+    FILTER_PROFILE = STRATEGY_FILTER_PROFILES["break_retest"]
 
     def __init__(
         self,

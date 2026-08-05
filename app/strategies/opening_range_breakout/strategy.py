@@ -36,6 +36,7 @@ from app.strategies.opening_range_breakout.schemas import (
 )
 from app.strategy_engine.base import BaseStrategy
 from app.strategy_engine.exceptions import StrategyValidationError
+from app.strategy_engine.filters.strategy_profiles import STRATEGY_FILTER_PROFILES
 from app.strategy_engine.models import Signal, SignalType, TradePlan
 
 logger = get_logger(__name__)
@@ -43,6 +44,8 @@ logger = get_logger(__name__)
 
 class OpeningRangeBreakoutStrategy(BaseStrategy):
     """Configurable Opening Range Breakout strategy (intraday only)."""
+
+    FILTER_PROFILE = STRATEGY_FILTER_PROFILES["opening_range_breakout"]
 
     def __init__(
         self,

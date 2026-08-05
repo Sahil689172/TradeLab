@@ -18,10 +18,16 @@ class StrategyRunner:
 
     Lifecycle (no business logic):
         bind symbol from features → validate → prepare → generate_signal →
-        generate_trade_plan
+        generate_trade_plan → optional filter pipeline (A4X.6)
     """
 
-    def run(self, features: pd.DataFrame, strategy: BaseStrategy) -> TradePlan:
+    def run(
+        self,
+        features: pd.DataFrame,
+        strategy: BaseStrategy,
+        *,
+        apply_filters: bool | None = None,
+    ) -> TradePlan:
         """Execute ``strategy`` against ``features`` and return a trade plan.
 
         Args:
@@ -29,9 +35,11 @@ class StrategyRunner:
                 Symbol should be present in ``features.attrs["symbol"]`` or a
                 ``symbol`` column so it propagates into TradePlan automatically.
             strategy: Concrete ``BaseStrategy`` implementation.
+            apply_filters: When None, uses ``strategy.filter_pipeline_enabled``
+                (default False). When True/False, overrides the strategy config.
 
         Returns:
-            TradePlan produced by the strategy.
+            TradePlan produced by the strategy (possibly filter-adjusted).
 
         Raises:
             TypeError: When inputs are not of the expected types.
@@ -98,6 +106,22 @@ class StrategyRunner:
             raise StrategyEngineError(
                 f"Strategy '{strategy.name}' dropped input symbol: "
                 f"expected {symbol!r}, got {trade_plan.symbol!r}",
+            )
+
+        should_filter = (
+            strategy.filter_pipeline_enabled if apply_filters is None else bool(apply_filters)
+        )
+        if should_filter:
+            from app.strategy_engine.filters.integration import apply_strategy_filter_pipeline
+
+            options = strategy.filter_pipeline_options
+            trade_plan, _result = apply_strategy_filter_pipeline(
+                trade_plan,
+                profile=strategy.filter_profile,
+                features=prepared,
+                enable_optional=options.get("enable_optional"),
+                disable=options.get("disable"),
+                param_overrides=options.get("param_overrides"),
             )
 
         logger.info(

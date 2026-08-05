@@ -43,6 +43,7 @@ from app.strategies.donchian.schemas import (
 )
 from app.strategy_engine.base import BaseStrategy
 from app.strategy_engine.exceptions import StrategyValidationError
+from app.strategy_engine.filters.strategy_profiles import STRATEGY_FILTER_PROFILES
 from app.strategy_engine.models import Signal, TradePlan
 
 logger = get_logger(__name__)
@@ -50,6 +51,8 @@ logger = get_logger(__name__)
 
 class DonchianStrategy(BaseStrategy):
     """Standalone Donchian / Turtle breakout strategy with reusable channel DI."""
+
+    FILTER_PROFILE = STRATEGY_FILTER_PROFILES["donchian"]
 
     def __init__(
         self,

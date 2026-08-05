@@ -37,6 +37,7 @@ from app.strategies.vwap.evaluation import (
 from app.strategies.vwap.schemas import VWAPSetupAssessment, VWAPTradePlan
 from app.strategy_engine.base import BaseStrategy
 from app.strategy_engine.exceptions import StrategyValidationError
+from app.strategy_engine.filters.strategy_profiles import STRATEGY_FILTER_PROFILES
 from app.strategy_engine.models import Signal, TradePlan
 
 logger = get_logger(__name__)
@@ -44,6 +45,8 @@ logger = get_logger(__name__)
 
 class VWAPStrategy(BaseStrategy):
     """Standalone Daily VWAP strategy (intraday only)."""
+
+    FILTER_PROFILE = STRATEGY_FILTER_PROFILES["vwap"]
 
     def __init__(
         self,

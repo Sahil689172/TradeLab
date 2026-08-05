@@ -41,6 +41,7 @@ from app.strategies.supertrend.evaluation import (
 from app.strategies.supertrend.schemas import SuperTrendPlan, SuperTrendSetup
 from app.strategy_engine.base import BaseStrategy
 from app.strategy_engine.exceptions import StrategyValidationError
+from app.strategy_engine.filters.strategy_profiles import STRATEGY_FILTER_PROFILES
 from app.strategy_engine.models import Signal, TradePlan
 
 logger = get_logger(__name__)
@@ -48,6 +49,8 @@ logger = get_logger(__name__)
 
 class SuperTrendStrategy(BaseStrategy):
     """Standalone SuperTrend trend-flip strategy with reusable indicator DI."""
+
+    FILTER_PROFILE = STRATEGY_FILTER_PROFILES["supertrend"]
 
     def __init__(
         self,

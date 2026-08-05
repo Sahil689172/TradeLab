@@ -35,6 +35,7 @@ from app.strategies.darvas_box.evaluation import (
 from app.strategies.darvas_box.schemas import DarvasBoxPlan, DarvasSetup
 from app.strategy_engine.base import BaseStrategy
 from app.strategy_engine.exceptions import StrategyValidationError
+from app.strategy_engine.filters.strategy_profiles import STRATEGY_FILTER_PROFILES
 from app.strategy_engine.models import Signal, TradePlan
 
 logger = get_logger(__name__)
@@ -42,6 +43,8 @@ logger = get_logger(__name__)
 
 class DarvasBoxStrategy(BaseStrategy):
     """Classic Darvas Box breakout / breakdown strategy."""
+
+    FILTER_PROFILE = STRATEGY_FILTER_PROFILES["darvas_box"]
 
     def __init__(
         self,

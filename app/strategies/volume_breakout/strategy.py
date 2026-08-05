@@ -39,6 +39,7 @@ from app.strategies.volume_breakout.schemas import (
 )
 from app.strategy_engine.base import BaseStrategy
 from app.strategy_engine.exceptions import StrategyValidationError
+from app.strategy_engine.filters.strategy_profiles import STRATEGY_FILTER_PROFILES
 from app.strategy_engine.models import Signal, TradePlan
 
 logger = get_logger(__name__)
@@ -46,6 +47,8 @@ logger = get_logger(__name__)
 
 class VolumeBreakoutStrategy(BaseStrategy):
     """Standalone volume-confirmed breakout strategy."""
+
+    FILTER_PROFILE = STRATEGY_FILTER_PROFILES["volume_breakout"]
 
     def __init__(
         self,

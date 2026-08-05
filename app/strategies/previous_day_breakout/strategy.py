@@ -35,6 +35,7 @@ from app.strategies.previous_day_breakout.schemas import (
 )
 from app.strategy_engine.base import BaseStrategy
 from app.strategy_engine.exceptions import StrategyValidationError
+from app.strategy_engine.filters.strategy_profiles import STRATEGY_FILTER_PROFILES
 from app.strategy_engine.models import Signal, SignalType, TradePlan
 
 logger = get_logger(__name__)
@@ -42,6 +43,8 @@ logger = get_logger(__name__)
 
 class PreviousDayBreakoutStrategy(BaseStrategy):
     """Multi-timeframe Previous Day High/Low breakout (Magic Box) strategy."""
+
+    FILTER_PROFILE = STRATEGY_FILTER_PROFILES["previous_day_breakout"]
 
     def __init__(
         self,

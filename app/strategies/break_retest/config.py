@@ -11,6 +11,9 @@ class BreakRetestStrategyConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     strategy_name: str = "break_retest"
+    enable_filter_pipeline: bool = False
+    filter_enable_optional: tuple[str, ...] = ()
+    filter_disable: tuple[str, ...] = ()
     symbol: str = Field(default="UNKNOWN", min_length=1, max_length=32)
 
     date_column: str = "date"

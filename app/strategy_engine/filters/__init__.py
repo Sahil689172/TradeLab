@@ -1,8 +1,8 @@
-"""Strategy Filter Framework — A4X.1–A4X.5 filters.
+"""Strategy Filter Framework — A4X.1–A4X.6.
 
 Package path: ``app/strategy_engine/filters/`` (TradeLab convention).
-Strategies never import concrete filters — inject them via ``FilterRegistry``.
-Strategies may call ``request_confirmations`` to opt into HTF checks.
+Strategies declare ``FILTER_PROFILE`` (mandatory/optional/default/configurable)
+and keep raw signal logic unchanged. Enable via ``enable_filter_pipeline=True``.
 """
 
 from app.strategy_engine.filters.adx import ADXFilter, ADXFilterConfig
@@ -12,6 +12,7 @@ from app.strategy_engine.filters.atr_trailing_stop import (
     ATRTrailingStopFilterConfig,
 )
 from app.strategy_engine.filters.base import BaseStrategyFilter, FilterBase
+from app.strategy_engine.filters.catalog import FILTER_CATALOG, create_filter
 from app.strategy_engine.filters.confirmation import (
     ALL_HTF_CONFIRMATIONS,
     DAILY,
@@ -23,6 +24,17 @@ from app.strategy_engine.filters.confirmation import (
     WEEKLY,
     request_confirmations,
     requested_confirmations,
+)
+from app.strategy_engine.filters.integration import (
+    apply_strategy_filter_pipeline,
+    build_pipeline_from_profile,
+    enrich_metadata_from_features,
+)
+from app.strategy_engine.filters.profiles import FilterRole, FilterSpec, StrategyFilterProfile
+from app.strategy_engine.filters.strategy_profiles import (
+    STRATEGY_FILTER_PROFILES,
+    get_strategy_filter_profile,
+    list_strategy_filter_profiles,
 )
 from app.strategy_engine.filters.daily_confirmation import (
     DailyConfirmationFilter,
@@ -139,6 +151,7 @@ __all__ = [
     "DailyConfirmationFilterConfig",
     "EMA200Filter",
     "EMA200FilterConfig",
+    "FILTER_CATALOG",
     "FilterBase",
     "FilterConfig",
     "FilterNotFoundError",
@@ -148,6 +161,8 @@ __all__ = [
     "FilterRegistrationError",
     "FilterRegistry",
     "FilterRegistryPort",
+    "FilterRole",
+    "FilterSpec",
     "FilterStepResult",
     "FilterValidationError",
     "FixedStopFilter",
@@ -188,12 +203,14 @@ __all__ = [
     "RiskRewardFilterConfig",
     "SMA200Filter",
     "SMA200FilterConfig",
+    "STRATEGY_FILTER_PROFILES",
     "SidewaysMarketFilter",
     "SidewaysMarketFilterConfig",
     "StocksInPlayFilter",
     "StocksInPlayFilterConfig",
     "StrategyFilterError",
     "StrategyFilterPort",
+    "StrategyFilterProfile",
     "StrategyRecommendation",
     "TrendingMarketFilter",
     "TrendingMarketFilterConfig",
@@ -207,6 +224,12 @@ __all__ = [
     "WEEKLY",
     "WeeklyConfirmationFilter",
     "WeeklyConfirmationFilterConfig",
+    "apply_strategy_filter_pipeline",
+    "build_pipeline_from_profile",
+    "create_filter",
+    "enrich_metadata_from_features",
+    "get_strategy_filter_profile",
+    "list_strategy_filter_profiles",
     "request_confirmations",
     "requested_confirmations",
 ]
