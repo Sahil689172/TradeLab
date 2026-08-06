@@ -16,7 +16,12 @@ from app.strategies.donchian import (
     DonchianStrategyConfig,
     register_donchian_strategy,
 )
-from app.strategies.ema_trend import EMATrendConfig, EMATrendStrategy, register_ema_trend_strategy
+from app.strategies.ema_trend import (
+    EMATrendConfig,
+    EMATrendStrategy,
+    register_ema_trend_professional_strategy,
+    register_ema_trend_strategy,
+)
 from app.strategies.momentum import (
     MomentumConfig,
     MomentumEngine,
@@ -80,6 +85,7 @@ __all__ = [
     "register_cpr_strategy",
     "register_darvas_box_strategy",
     "register_donchian_strategy",
+    "register_ema_trend_professional_strategy",
     "register_ema_trend_strategy",
     "register_momentum_strategy",
     "register_opening_range_breakout_strategy",

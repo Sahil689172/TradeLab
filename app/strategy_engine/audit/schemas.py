@@ -29,6 +29,18 @@ class StrategyAuditMetrics(BaseModel):
     filter_rejected: int = Field(default=0, ge=0)
     filter_acceptance_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     filter_rejection_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    # Professional / strategy-local funnel (A4Y.1)
+    raw_buy_signals: int = Field(default=0, ge=0)
+    raw_sell_signals: int = Field(default=0, ge=0)
+    rejected_ema200: int = Field(default=0, ge=0)
+    rejected_adx: int = Field(default=0, ge=0)
+    rejected_volume: int = Field(default=0, ge=0)
+    rejected_atr: int = Field(default=0, ge=0)
+    rejected_other: int = Field(default=0, ge=0)
+    final_buy_signals: int = Field(default=0, ge=0)
+    final_sell_signals: int = Field(default=0, ge=0)
+    funnel_acceptance_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    funnel_rejection_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     filter_integration_ok: bool = False
     runtime_errors: tuple[str, ...] = ()
     ready: bool = False

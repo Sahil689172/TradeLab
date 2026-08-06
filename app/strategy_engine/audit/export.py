@@ -35,6 +35,17 @@ def export_audit_csv(report: StrategyAuditReport, path: str | Path) -> Path:
         "average_win_expectancy",
         "filter_acceptance_rate",
         "filter_rejection_rate",
+        "raw_buy_signals",
+        "raw_sell_signals",
+        "rejected_ema200",
+        "rejected_adx",
+        "rejected_volume",
+        "rejected_atr",
+        "rejected_other",
+        "final_buy_signals",
+        "final_sell_signals",
+        "funnel_acceptance_rate",
+        "funnel_rejection_rate",
         "filter_integration_ok",
         "composite_score",
         "ready",
@@ -42,10 +53,12 @@ def export_audit_csv(report: StrategyAuditReport, path: str | Path) -> Path:
         "rank",
     ]
     rank_by_name = {row.strategy_name: row.rank for row in report.comparison.rows}
+    metrics_by_name = {m.strategy_name: m for m in report.metrics}
     with target.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for row in report.scorecard.rows:
+            m = metrics_by_name.get(row.strategy_name)
             writer.writerow(
                 {
                     "strategy_name": row.strategy_name,
@@ -59,6 +72,17 @@ def export_audit_csv(report: StrategyAuditReport, path: str | Path) -> Path:
                     "average_win_expectancy": row.average_win_expectancy,
                     "filter_acceptance_rate": row.filter_acceptance_rate,
                     "filter_rejection_rate": row.filter_rejection_rate,
+                    "raw_buy_signals": getattr(m, "raw_buy_signals", 0) if m else 0,
+                    "raw_sell_signals": getattr(m, "raw_sell_signals", 0) if m else 0,
+                    "rejected_ema200": getattr(m, "rejected_ema200", 0) if m else 0,
+                    "rejected_adx": getattr(m, "rejected_adx", 0) if m else 0,
+                    "rejected_volume": getattr(m, "rejected_volume", 0) if m else 0,
+                    "rejected_atr": getattr(m, "rejected_atr", 0) if m else 0,
+                    "rejected_other": getattr(m, "rejected_other", 0) if m else 0,
+                    "final_buy_signals": getattr(m, "final_buy_signals", 0) if m else 0,
+                    "final_sell_signals": getattr(m, "final_sell_signals", 0) if m else 0,
+                    "funnel_acceptance_rate": getattr(m, "funnel_acceptance_rate", 0) if m else 0,
+                    "funnel_rejection_rate": getattr(m, "funnel_rejection_rate", 0) if m else 0,
                     "filter_integration_ok": row.filter_integration_ok,
                     "composite_score": row.composite_score,
                     "ready": row.ready,

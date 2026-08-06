@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from statistics import mean
+from typing import Any
 
 from app.strategy_engine.audit.schemas import StrategyAuditMetrics
 from app.strategy_engine.models import SignalType, TradePlan
@@ -27,6 +28,7 @@ def aggregate_metrics(
     filter_rejected: int = 0,
     filter_integration_ok: bool = False,
     runtime_errors: list[str] | None = None,
+    funnel: dict[str, Any] | None = None,
 ) -> StrategyAuditMetrics:
     """Aggregate TradePlan samples into StrategyAuditMetrics."""
     errors = tuple(runtime_errors or ())
@@ -56,8 +58,28 @@ def aggregate_metrics(
     accept_rate = (filter_accepted / filter_evals) if filter_evals else 0.0
     reject_rate = (filter_rejected / filter_evals) if filter_evals else 0.0
 
-    # Ready when filter integration passes and at least one evaluation succeeded.
-    # Runtime window errors are recorded but do not block readiness if we recovered.
+    funnel = funnel or {}
+    raw_buy = int(funnel.get("raw_buy", 0))
+    raw_sell = int(funnel.get("raw_sell", 0))
+    final_buy = int(funnel.get("final_buy", buy))
+    final_sell = int(funnel.get("final_sell", sell))
+    rejected_ema200 = int(funnel.get("rejected_ema200", 0))
+    rejected_adx = int(funnel.get("rejected_adx", 0))
+    rejected_volume = int(funnel.get("rejected_volume", 0))
+    rejected_atr = int(funnel.get("rejected_atr", 0))
+    rejected_other = int(funnel.get("rejected_other", 0))
+    raw_actionable = raw_buy + raw_sell
+    final_actionable = final_buy + final_sell
+    total_rejected = (
+        rejected_ema200
+        + rejected_adx
+        + rejected_volume
+        + rejected_atr
+        + rejected_other
+    )
+    funnel_accept = (final_actionable / raw_actionable) if raw_actionable else 0.0
+    funnel_reject = (total_rejected / raw_actionable) if raw_actionable else 0.0
+
     ready = filter_integration_ok and bool(plans)
 
     return StrategyAuditMetrics(
@@ -77,6 +99,17 @@ def aggregate_metrics(
         filter_rejected=filter_rejected,
         filter_acceptance_rate=accept_rate,
         filter_rejection_rate=reject_rate,
+        raw_buy_signals=raw_buy,
+        raw_sell_signals=raw_sell,
+        rejected_ema200=rejected_ema200,
+        rejected_adx=rejected_adx,
+        rejected_volume=rejected_volume,
+        rejected_atr=rejected_atr,
+        rejected_other=rejected_other,
+        final_buy_signals=final_buy,
+        final_sell_signals=final_sell,
+        funnel_acceptance_rate=funnel_accept,
+        funnel_rejection_rate=funnel_reject,
         filter_integration_ok=filter_integration_ok,
         runtime_errors=errors,
         ready=ready,

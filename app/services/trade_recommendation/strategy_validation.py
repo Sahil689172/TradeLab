@@ -26,6 +26,7 @@ from app.strategies import (
     register_cpr_strategy,
     register_darvas_box_strategy,
     register_donchian_strategy,
+    register_ema_trend_professional_strategy,
     register_ema_trend_strategy,
     register_momentum_strategy,
     register_opening_range_breakout_strategy,
@@ -51,6 +52,9 @@ RegisterFn = Callable[[StrategyRegistry], BaseStrategy]
 STRATEGY_REGISTERARS: dict[str, RegisterFn] = {
     "ema": register_ema_trend_strategy,
     "ema_trend": register_ema_trend_strategy,
+    "ema_raw": register_ema_trend_strategy,
+    "ema_professional": register_ema_trend_professional_strategy,
+    "ema_trend_professional": register_ema_trend_professional_strategy,
     "previous_day_breakout": register_previous_day_breakout_strategy,
     "pdh": register_previous_day_breakout_strategy,
     "pdl": register_previous_day_breakout_strategy,

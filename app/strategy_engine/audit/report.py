@@ -184,6 +184,25 @@ def format_readiness_report(report: ProfessionalReadinessReport) -> str:
     return "\n".join(lines)
 
 
+def format_signal_funnel(metrics: StrategyAuditMetrics) -> str:
+    """Render raw → rejection → final funnel for one strategy."""
+    lines = [
+        f"Signal Funnel — {metrics.strategy_name} ({metrics.symbol})",
+        f"  Raw BUY:              {metrics.raw_buy_signals}",
+        f"  Raw SELL:             {metrics.raw_sell_signals}",
+        f"  Rejected by EMA200:   {metrics.rejected_ema200}",
+        f"  Rejected by ADX:      {metrics.rejected_adx}",
+        f"  Rejected by Volume:   {metrics.rejected_volume}",
+        f"  Rejected by ATR:      {metrics.rejected_atr}",
+        f"  Rejected by Other:    {metrics.rejected_other}",
+        f"  Final BUY:            {metrics.final_buy_signals}",
+        f"  Final SELL:           {metrics.final_sell_signals}",
+        f"  Acceptance Rate:      {metrics.funnel_acceptance_rate:.2%}",
+        f"  Rejection Rate:       {metrics.funnel_rejection_rate:.2%}",
+    ]
+    return "\n".join(lines)
+
+
 def format_audit_report(report: StrategyAuditReport) -> str:
     sections = [
         f"TradeLab Strategy Audit — {report.symbol}",
@@ -195,6 +214,15 @@ def format_audit_report(report: StrategyAuditReport) -> str:
         "COMPARISON",
         format_comparison_table(report.comparison),
         "",
-        format_readiness_report(report.readiness),
     ]
+    funnel_blocks = [
+        format_signal_funnel(m)
+        for m in report.metrics
+        if m.raw_buy_signals or m.raw_sell_signals or m.final_buy_signals or m.final_sell_signals
+    ]
+    if funnel_blocks:
+        sections.append("SIGNAL FUNNELS")
+        sections.append("\n\n".join(funnel_blocks))
+        sections.append("")
+    sections.append(format_readiness_report(report.readiness))
     return "\n".join(sections)

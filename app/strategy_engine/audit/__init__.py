@@ -23,6 +23,7 @@ from app.strategy_engine.audit.report import (
     format_comparison_table,
     format_readiness_report,
     format_scorecard_table,
+    format_signal_funnel,
 )
 from app.strategy_engine.audit.schemas import (
     ProfessionalReadinessReport,
@@ -60,6 +61,7 @@ __all__ = [
     "format_comparison_table",
     "format_readiness_report",
     "format_scorecard_table",
+    "format_signal_funnel",
     "verify_filter_integration",
     "win_expectancy",
 ]

@@ -20,3 +20,14 @@ def register_ema_trend_strategy(
     strategy = build_ema_trend_strategy(config)
     registry.register(strategy)
     return strategy
+
+
+def register_ema_trend_professional_strategy(
+    registry: StrategyRegistry,
+    config: EMATrendConfig | None = None,
+) -> EMATrendStrategy:
+    """Register EMA trend in professional mode (institutional filters)."""
+    professional = config or EMATrendConfig.professional()
+    if professional.mode != "professional":
+        professional = professional.model_copy(update={"mode": "professional"})
+    return register_ema_trend_strategy(registry, professional)

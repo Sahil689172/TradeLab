@@ -182,6 +182,10 @@ def audit_strategy(
     if not filter_ok:
         errors.append(f"filter_integration: {filter_detail}")
 
+    reset_funnel = getattr(strategy, "reset_session_funnel", None)
+    if callable(reset_funnel):
+        reset_funnel()
+
     end = len(frame)
     start = min(max(min_bars, 3), end)
     indices = list(range(start, end + 1, max(stride, 1)))
@@ -234,6 +238,11 @@ def audit_strategy(
             except Exception as ctx_exc:  # noqa: BLE001
                 errors.append(f"context: {ctx_exc}")
 
+    funnel_payload: dict[str, Any] | None = None
+    session_funnel = getattr(strategy, "session_funnel", None)
+    if session_funnel is not None and hasattr(session_funnel, "model_dump"):
+        funnel_payload = session_funnel.model_dump()
+
     return aggregate_metrics(
         strategy_name=strategy.name,
         symbol=resolved or "UNKNOWN",
@@ -242,6 +251,7 @@ def audit_strategy(
         filter_rejected=rejected,
         filter_integration_ok=filter_ok,
         runtime_errors=errors,
+        funnel=funnel_payload,
     )
 
 
@@ -254,6 +264,7 @@ def audit_from_plans(
     filter_rejected: int = 0,
     filter_integration_ok: bool = True,
     runtime_errors: list[str] | None = None,
+    funnel: dict[str, Any] | None = None,
 ) -> StrategyAuditMetrics:
     """Build metrics from pre-collected plans (unit-test friendly)."""
     return aggregate_metrics(
@@ -264,6 +275,7 @@ def audit_from_plans(
         filter_rejected=filter_rejected,
         filter_integration_ok=filter_integration_ok,
         runtime_errors=runtime_errors,
+        funnel=funnel,
     )
 
 

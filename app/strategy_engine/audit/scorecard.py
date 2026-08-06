@@ -39,6 +39,14 @@ def build_scorecard(
             notes_parts.append("filter_integration_failed")
         if metrics.evaluations == 0:
             notes_parts.append("no_evaluations")
+        if metrics.raw_buy_signals or metrics.raw_sell_signals:
+            notes_parts.append(
+                f"funnel raw={metrics.raw_buy_signals}/{metrics.raw_sell_signals} "
+                f"final={metrics.final_buy_signals}/{metrics.final_sell_signals} "
+                f"rej(ema200={metrics.rejected_ema200},adx={metrics.rejected_adx},"
+                f"vol={metrics.rejected_volume},atr={metrics.rejected_atr},"
+                f"other={metrics.rejected_other})",
+            )
         rows.append(
             StrategyScorecardRow(
                 strategy_name=metrics.strategy_name,
