@@ -55,6 +55,9 @@ def atr_trailing_stop_price(
     return float(extreme) - distance
 
 
+EMA200_WARMUP_BARS = 200
+
+
 def apply_professional_gates(
     *,
     config: EMATrendConfig,
@@ -70,11 +73,18 @@ def apply_professional_gates(
     atr: float,
     bar_closed: bool,
     last_emitted: SignalType | None,
+    bar_count: int | None = None,
 ) -> ProfessionalEvalResult:
-    """Gate a raw BUY/SELL crossover through professional filters.
+    """Gate a raw crossover through professional logic (long-only semantics).
 
-    Filters are modular and ordered: confirm_on_close → duplicate → EMA200 →
-    ADX → Volume → ATR validity. First failure rejects (HOLD) and is recorded.
+    Two distinct execution paths (see A4Y.1.6 root-cause fixes):
+
+    * **ENTRY (BUY)** runs the full institutional stack, in order:
+      ``confirm_on_close → duplicate → EMA200 (with 200-bar warm-up) →
+      ADX → Volume → ATR validity``. First failure rejects (HOLD).
+    * **EXIT (SELL)** is *always allowed*. Entry filters (EMA200 / ADX /
+      Volume / Duplicate suppression) must **never** block an exit. Only
+      candle-close confirmation and ATR validity may apply.
     """
     if raw_signal not in {SignalType.BUY, SignalType.SELL}:
         return ProfessionalEvalResult(
@@ -116,33 +126,58 @@ def apply_professional_gates(
             notes=notes,
         )
 
+    # Candle-close confirmation is a data-timing gate, applied to entries and
+    # exits alike (feature frames are closed candles by default).
     if config.confirm_on_close and not bar_closed:
         return reject(
             RejectionFilter.CONFIRM_ON_CLOSE,
             "Signal requires candle close confirmation",
         )
 
-    # Avoid duplicate BUY/SELL while the same side remains active (no new cross).
-    if last_emitted is not None and last_emitted is raw_signal:
+    # ------------------------------------------------------------------ EXIT
+    # SELL == exit in a long-only system. Exits are unconditional except for
+    # ATR validity (optional). No EMA200 / ADX / Volume / Duplicate here.
+    if raw_signal is SignalType.SELL:
+        if config.atr_stop and atr <= 0:
+            return reject(RejectionFilter.ATR, f"Invalid ATR for stop: {atr}")
+        notes.append(
+            "Exit (SELL): entry filters bypassed "
+            "(no EMA200 / ADX / Volume / Duplicate)",
+        )
+        funnel_kwargs["final_sell"] = 1
+        return ProfessionalEvalResult(
+            raw_signal=raw_signal,
+            final_signal=SignalType.SELL,
+            rejections=rejections,
+            funnel=SignalFunnel(**funnel_kwargs),
+            notes=notes,
+        )
+
+    # ----------------------------------------------------------------- ENTRY
+    # Duplicate suppression only guards *entries*; it never blocks an exit.
+    if last_emitted is SignalType.BUY:
         return reject(
             RejectionFilter.DUPLICATE,
-            f"Duplicate {raw_signal.value} suppressed while trend unchanged",
+            "Duplicate BUY suppressed while long position already open",
         )
 
     if config.ema200_filter or config.trend_filter:
-        if ema200 is None:
+        if bar_count is not None and bar_count < EMA200_WARMUP_BARS:
+            notes.append(
+                f"EMA200 filter skipped (warm-up {bar_count} < "
+                f"{EMA200_WARMUP_BARS} bars)",
+            )
+        elif ema200 is None:
             return reject(RejectionFilter.EMA200, "EMA200 unavailable")
-        if raw_signal is SignalType.BUY and close <= ema200:
+        elif close <= ema200:
             return reject(
                 RejectionFilter.EMA200,
                 f"BUY blocked: close {close:.4f} <= EMA200 {ema200:.4f}",
             )
-        if raw_signal is SignalType.SELL and close >= ema200:
-            return reject(
-                RejectionFilter.EMA200,
-                f"SELL blocked: close {close:.4f} >= EMA200 {ema200:.4f}",
+        else:
+            notes.append(
+                f"EMA200 filter passed (close={close:.4f}, ema200={ema200:.4f})",
             )
-        notes.append(f"EMA200 filter passed (close={close:.4f}, ema200={ema200:.4f})")
 
     if config.adx_filter:
         if adx <= config.adx_threshold:
@@ -186,11 +221,10 @@ def apply_professional_gates(
             f"ATR stop enabled (multiplier={config.atr_stop_multiplier:g}, atr={atr:.4f})",
         )
 
-    funnel_kwargs["final_buy"] = 1 if raw_signal is SignalType.BUY else 0
-    funnel_kwargs["final_sell"] = 1 if raw_signal is SignalType.SELL else 0
+    funnel_kwargs["final_buy"] = 1
     return ProfessionalEvalResult(
         raw_signal=raw_signal,
-        final_signal=raw_signal,
+        final_signal=SignalType.BUY,
         rejections=rejections,
         funnel=SignalFunnel(**funnel_kwargs),
         notes=notes,

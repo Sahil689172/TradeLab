@@ -66,6 +66,25 @@ class SignalFunnel(BaseModel):
         )
 
     @property
+    def buy_rejected_total(self) -> int:
+        """Entry (BUY) rejections. After A4Y.1.6 exits never reach these gates,
+        so all rejection buckets belong to the BUY entry funnel."""
+        return self.total_rejected
+
+    @property
+    def buy_acceptance_rate(self) -> float:
+        if self.raw_buy <= 0:
+            return 0.0
+        return self.final_buy / self.raw_buy
+
+    @property
+    def sell_exit_rate(self) -> float:
+        """Fraction of raw SELL crossovers that became exits (should be ~1.0)."""
+        if self.raw_sell <= 0:
+            return 0.0
+        return self.final_sell / self.raw_sell
+
+    @property
     def acceptance_rate(self) -> float:
         raw = self.raw_actionable
         if raw <= 0:
@@ -95,3 +114,27 @@ class SignalFunnel(BaseModel):
 
 def empty_funnel() -> SignalFunnel:
     return SignalFunnel()
+
+
+def format_buy_sell_funnels(funnel: SignalFunnel) -> str:
+    """Render separate BUY (entry) and SELL (exit) funnels (A4Y.1.6 #4).
+
+    Entry filters only ever reject BUY signals; SELL signals are exits and are
+    never blocked by EMA200 / ADX / Volume / Duplicate suppression.
+    """
+    lines = [
+        "BUY Funnel (entry filters):",
+        f"  Raw BUY:            {funnel.raw_buy}",
+        f"  - Rejected EMA200:  {funnel.rejected_ema200}",
+        f"  - Rejected ADX:     {funnel.rejected_adx}",
+        f"  - Rejected Volume:  {funnel.rejected_volume}",
+        f"  - Rejected ATR:     {funnel.rejected_atr}",
+        f"  - Rejected Other:   {funnel.rejected_other}",
+        f"  Final BUY:          {funnel.final_buy}",
+        f"  Acceptance rate:    {funnel.buy_acceptance_rate:.1%}",
+        "SELL Funnel (exits — never blocked by entry filters):",
+        f"  Raw SELL:           {funnel.raw_sell}",
+        f"  Final SELL (exits): {funnel.final_sell}",
+        f"  Exit rate:          {funnel.sell_exit_rate:.1%}",
+    ]
+    return "\n".join(lines)

@@ -152,6 +152,23 @@ class EMATrendStrategy(BaseStrategy):
             raise StrategyValidationError(
                 f"EMA trend strategy missing required columns: {', '.join(missing)}",
             )
+
+        # A4Y.1.6 Root Cause #7: verify professional feature availability with
+        # meaningful diagnostics before evaluation. The volume filter tolerates a
+        # partial set (relative-volume OR volume-vs-SMA), but at least one source
+        # must exist, otherwise every entry would silently fail confirmation.
+        if self._config.mode == "professional" and self._config.volume_filter:
+            volume_sources = {
+                self._config.relative_volume_column,
+                self._config.volume_sma_column,
+                self._config.volume_column,
+            }
+            if not any(column in features.columns for column in volume_sources):
+                raise StrategyValidationError(
+                    "Professional volume filter is enabled but no volume feature "
+                    f"is available. Expected one of: {', '.join(sorted(volume_sources))}. "
+                    "Disable volume_filter or provide volume features.",
+                )
         if len(features) < self._config.min_history_bars:
             raise StrategyValidationError(
                 f"Need at least {self._config.min_history_bars} bars, got {len(features)}",
@@ -399,6 +416,7 @@ class EMATrendStrategy(BaseStrategy):
             atr=snapshot.atr,
             bar_closed=bar_closed,
             last_emitted=self._last_emitted_side,
+            bar_count=len(features),
         )
         self._last_rejections = list(result.rejections)
         self._last_funnel = result.funnel

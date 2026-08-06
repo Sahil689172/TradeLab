@@ -6,15 +6,22 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from app.backtesting.evaluation.backtester import (
+    BacktestSettings,
+    run_long_only_backtest,
+)
 from app.strategies.ema_trend import (
     EMATrendConfig,
     EMATrendStrategy,
     RejectionFilter,
+    SignalFunnel,
     atr_stop_price,
     atr_trailing_stop_price,
 )
+from app.strategies.ema_trend.diagnostics import format_buy_sell_funnels
 from app.strategy_engine import SignalType, StrategyRunner
 from app.strategy_engine.audit import aggregate_metrics, audit_from_plans, format_signal_funnel
+from app.strategy_engine.exceptions import StrategyValidationError
 from app.strategy_engine.models import TradePlan
 
 
@@ -114,14 +121,27 @@ def test_no_duplicate_buy(pro_strategy: EMATrendStrategy) -> None:
     assert any(r.rejected_by is RejectionFilter.DUPLICATE for r in pro_strategy.last_rejections)
 
 
-def test_no_duplicate_sell(pro_strategy: EMATrendStrategy) -> None:
+def test_sell_exit_never_suppressed(pro_strategy: EMATrendStrategy) -> None:
+    """A4Y.1.6 #1: SELL is an exit — never blocked by duplicate suppression."""
     frame = make_professional_frame(cross="below", close_vs_ema200="below")
     prepared = pro_strategy.prepare(frame)
     first = pro_strategy.generate_signal(prepared)
     second = pro_strategy.generate_signal(prepared)
     assert first.signal is SignalType.SELL
-    assert second.signal is SignalType.HOLD
-    assert any(r.rejected_by is RejectionFilter.DUPLICATE for r in pro_strategy.last_rejections)
+    # Repeated exits are always allowed (harmless when already flat).
+    assert second.signal is SignalType.SELL
+    assert not any(
+        r.rejected_by is RejectionFilter.DUPLICATE for r in pro_strategy.last_rejections
+    )
+
+
+def test_sell_exit_bypasses_ema200(pro_strategy: EMATrendStrategy) -> None:
+    """A4Y.1.6 #1/#3: EMA200 must never block an exit (close ABOVE EMA200)."""
+    frame = make_professional_frame(cross="below", close_vs_ema200="above")
+    signal = pro_strategy.generate_signal(pro_strategy.prepare(frame))
+    assert signal.signal is SignalType.SELL
+    assert pro_strategy.last_funnel.final_sell == 1
+    assert pro_strategy.last_funnel.rejected_ema200 == 0
 
 
 def test_no_signal_without_true_cross(pro_strategy: EMATrendStrategy) -> None:
@@ -133,7 +153,8 @@ def test_no_signal_without_true_cross(pro_strategy: EMATrendStrategy) -> None:
 
 
 def test_ema200_filter_blocks_buy(pro_strategy: EMATrendStrategy) -> None:
-    frame = make_professional_frame(cross="above", close_vs_ema200="below")
+    # >= 200 bars so the EMA200 warm-up guard (A4Y.1.6 #5) is satisfied.
+    frame = make_professional_frame(rows=210, cross="above", close_vs_ema200="below")
     signal = pro_strategy.generate_signal(pro_strategy.prepare(frame))
     assert signal.signal is SignalType.HOLD
     assert pro_strategy.last_funnel.rejected_ema200 == 1
@@ -320,3 +341,140 @@ def test_aggregate_metrics_includes_funnel_defaults() -> None:
     )
     assert metrics.raw_buy_signals == 0
     assert metrics.funnel_acceptance_rate == 0.0
+
+
+# ---------------------------------------------------------------------------
+# A4Y.1.6 – Professional EMA Root Cause Fixes
+# ---------------------------------------------------------------------------
+
+
+def make_multi_cross_frame(rows: int = 240) -> pd.DataFrame:
+    """Oscillating EMAs that cross many times, close above EMA200 throughout."""
+    dates = pd.date_range("2023-01-01", periods=rows, freq="B")
+    t = np.arange(rows)
+    ema_fast = 100.0 + 4.0 * np.sin(2 * np.pi * t / 20.0)
+    ema_slow = 100.0 + 4.0 * np.sin(2 * np.pi * t / 20.0 - 0.8)
+    close = ema_fast + 2.0
+    return pd.DataFrame(
+        {
+            "date": dates,
+            "open": close - 0.5,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "close": close,
+            "volume": np.full(rows, 200_000.0),
+            "volume_sma_20": np.full(rows, 100_000.0),
+            "relative_volume_20": np.full(rows, 1.5),
+            "ema_9": ema_fast,
+            "ema_21": ema_slow,
+            "ema_20": close - 1.0,
+            "ema_50": close - 2.0,
+            "ema_200": np.full(rows, 96.0),
+            "adx_14": np.full(rows, 30.0),
+            "atr_14": np.full(rows, 2.0),
+            "rsi_14": np.full(rows, 55.0),
+        },
+    )
+
+
+def test_duplicate_lock_resets_after_exit(pro_strategy: EMATrendStrategy) -> None:
+    """A4Y.1.6 #2: after a SELL exit, a second BUY is allowed again."""
+    buy_frame = pro_strategy.prepare(make_professional_frame(cross="above"))
+    exit_frame = pro_strategy.prepare(
+        make_professional_frame(cross="below", close_vs_ema200="above"),
+    )
+
+    first_buy = pro_strategy.generate_signal(buy_frame)
+    exit_signal = pro_strategy.generate_signal(exit_frame)
+    second_buy = pro_strategy.generate_signal(buy_frame)
+
+    assert first_buy.signal is SignalType.BUY
+    assert exit_signal.signal is SignalType.SELL
+    assert second_buy.signal is SignalType.BUY  # no permanent duplicate lock
+
+
+def test_ema200_warmup_skips_filter_before_200_bars() -> None:
+    """A4Y.1.6 #5: EMA200 filter is skipped until >= 200 bars are available."""
+    strat = EMATrendStrategy(
+        EMATrendConfig.professional(symbol="X", min_history_bars=60),
+    )
+    # close BELOW ema200 would normally block a BUY, but warm-up skips the gate.
+    frame = make_professional_frame(rows=120, cross="above", close_vs_ema200="below")
+    signal = strat.generate_signal(strat.prepare(frame))
+    assert signal.signal is SignalType.BUY
+    assert strat.last_funnel.rejected_ema200 == 0
+
+
+def test_professional_adx_default_threshold() -> None:
+    """A4Y.1.6 #6: professional default ADX threshold is 20; raw stays 25."""
+    assert EMATrendConfig.professional(symbol="X").adx_threshold == pytest.approx(20.0)
+    assert EMATrendConfig(symbol="X").adx_threshold == pytest.approx(25.0)
+
+
+def test_signal_funnel_buy_sell_separation() -> None:
+    """A4Y.1.6 #4: BUY and SELL funnels are reported separately."""
+    funnel = SignalFunnel(
+        raw_buy=5,
+        rejected_ema200=2,
+        rejected_adx=1,
+        final_buy=2,
+        raw_sell=3,
+        final_sell=3,
+    )
+    assert funnel.buy_acceptance_rate == pytest.approx(2 / 5)
+    assert funnel.sell_exit_rate == pytest.approx(1.0)
+    text = format_buy_sell_funnels(funnel)
+    assert "BUY Funnel" in text
+    assert "SELL Funnel" in text
+    assert "never blocked" in text
+
+
+def test_feature_validation_requires_volume_source() -> None:
+    """A4Y.1.6 #7: meaningful diagnostic when volume features are missing."""
+    strat = EMATrendStrategy(
+        EMATrendConfig.professional(symbol="X", min_history_bars=60),
+    )
+    frame = make_professional_frame(rows=80).drop(
+        columns=["volume", "volume_sma_20", "relative_volume_20"],
+    )
+    with pytest.raises(StrategyValidationError, match="volume feature"):
+        strat.validate(frame)
+
+
+def test_replay_no_permanent_lock() -> None:
+    """A4Y.1.6: expanding-window replay yields multiple BUYs and SELL exits."""
+    strat = EMATrendStrategy(
+        EMATrendConfig.professional(symbol="RELIANCE", min_history_bars=60),
+    )
+    frame = make_multi_cross_frame(rows=240)
+    buys = 0
+    sells = 0
+    for cut in range(60, len(frame) + 1):
+        window = frame.iloc[:cut]
+        signal = strat.generate_signal(strat.prepare(window))
+        if signal.signal is SignalType.BUY:
+            buys += 1
+        elif signal.signal is SignalType.SELL:
+            sells += 1
+    assert buys > 1
+    assert sells >= 1
+
+
+def test_backtest_professional_produces_multiple_trades() -> None:
+    """A4Y.1.6: professional backtest closes positions (trades > 1)."""
+    strat = EMATrendStrategy(
+        EMATrendConfig.professional(symbol="RELIANCE", min_history_bars=60),
+    )
+    frame = make_multi_cross_frame(rows=240)
+    result = run_long_only_backtest(
+        strat,
+        frame,
+        mode="professional",
+        settings=BacktestSettings(min_history_bars=60),
+        symbol="RELIANCE",
+    )
+    assert result.signal_counts.get("BUY", 0) > 1
+    assert result.signal_counts.get("SELL", 0) >= 1
+    assert len(result.trades) > 1
+    # Exits close positions, so not everything is a forced "Replay End".
+    assert any(t.exit_reason == "SELL" for t in result.trades)

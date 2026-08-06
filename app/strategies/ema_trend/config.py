@@ -172,7 +172,9 @@ class EMATrendConfig(BaseModel):
             "trend_filter": True,
             "ema200_filter": True,
             "adx_filter": True,
-            "adx_threshold": 25.0,
+            # A4Y.1.6 Root Cause #6: professional default relaxed 25 -> 20
+            # (configurable, not hardcoded). Raw mode keeps its 25 default.
+            "adx_threshold": 20.0,
             "volume_filter": True,
             "relative_volume": 1.2,
             "atr_stop": True,
