@@ -180,10 +180,21 @@ class EMAEvaluationEngine:
 
         period_start = None
         period_end = None
-        for symbol, frame in symbol_frames.items():
+        total = len(symbol_frames)
+        for index, (symbol, frame) in enumerate(symbol_frames.items(), start=1):
+            print(
+                f"[{index}/{total}] {symbol} "
+                f"({len(frame)} bars, stride={self.config.stride}) ...",
+                flush=True,
+            )
             result = self.evaluate_symbol(symbol, frame)
             raw_bt = result["raw"]
             pro_bt = result["professional"]
+            print(
+                f"  done — raw trades={len(raw_bt.trades)} "
+                f"pro trades={len(pro_bt.trades)}",
+                flush=True,
+            )
             raw_trades.extend(t.as_dict() for t in raw_bt.trades)
             pro_trades.extend(t.as_dict() for t in pro_bt.trades)
             if raw_bt.equity_curve is not None:

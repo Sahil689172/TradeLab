@@ -114,21 +114,29 @@ def run_long_only_backtest(
     counts = {"BUY": 0, "SELL": 0, "HOLD": 0, "EXIT": 0}
 
     date_col = "date" if "date" in frame.columns else frame.columns[0]
-    n = len(frame)
-    start = min(max(settings.min_history_bars, 2), n)
 
-    for cut in range(start, n + 1, max(settings.stride, 1)):
-        window = frame.iloc[:cut]
+    # Prepare once (avoid O(n²) copy/sort/dropna on every expanding window).
+    # Evaluation fills only need SignalType — skip generate_trade_plan.
+    try:
+        strategy.validate(frame)
+        prepared = strategy.prepare(frame)
+        if resolve_symbol_from_features(prepared) is None:
+            prepared = attach_symbol(prepared.copy(deep=False), resolved)
+    except Exception as exc:  # noqa: BLE001
+        result.errors.append(f"prepare: {exc}")
+        return result
+
+    n = len(prepared)
+    start = min(max(settings.min_history_bars, 2), n)
+    stride = max(settings.stride, 1)
+
+    for cut in range(start, n + 1, stride):
+        window = prepared.iloc[:cut]
         row = window.iloc[-1]
         ts = pd.Timestamp(row[date_col]).to_pydatetime()
         close = float(row["close"])
         try:
-            strategy.validate(window)
-            prepared = strategy.prepare(window)
-            if resolve_symbol_from_features(prepared) is None:
-                prepared = attach_symbol(prepared.copy(deep=False), resolved)
-            signal = strategy.generate_signal(prepared)
-            plan = strategy.generate_trade_plan(prepared, signal)
+            signal = strategy.generate_signal(window)
             sig = signal.signal
             counts[sig.value] = counts.get(sig.value, 0) + 1
 
@@ -193,8 +201,8 @@ def run_long_only_backtest(
                 break
 
     # Flatten open position at end
-    if qty > 0 and entry_ts is not None and len(frame):
-        row = frame.iloc[-1]
+    if qty > 0 and entry_ts is not None and len(prepared):
+        row = prepared.iloc[-1]
         ts = pd.Timestamp(row[date_col]).to_pydatetime()
         close = float(row["close"])
         fill = _apply_slippage(close, side="SELL", bps=settings.slippage_bps)

@@ -115,16 +115,26 @@ def main() -> int:
         generate_charts=not args.no_charts,
     )
     # Auto-throttle large universes unless the user overrode stride.
-    if len(symbols) > 10 and args.stride == 1:
-        config.stride = 5
-        print(f"Note: universe size {len(symbols)} — using stride={config.stride} for speed")
+    # Default stride=1 on ~2500 daily bars × 50 symbols × 2 modes is too slow.
+    if args.stride == 1:
+        if len(symbols) > 50:
+            config.stride = 20
+        elif len(symbols) > 10:
+            config.stride = 10
+        if config.stride != 1:
+            print(
+                f"Note: universe size {len(symbols)} — using stride={config.stride} "
+                f"for speed (override with --stride N)",
+                flush=True,
+            )
 
     engine = EMAEvaluationEngine(config)
 
     frames: dict = {}
     sources: list[str] = []
     bars = 260 if len(symbols) <= 10 else 160
-    for symbol in symbols:
+    print(f"Loading {len(symbols)} symbols ...", flush=True)
+    for index, symbol in enumerate(symbols, start=1):
         if args.synthetic:
             frames[symbol] = synthetic_features(symbol=symbol, bars=bars)
             sources.append("synthetic")
@@ -138,14 +148,20 @@ def main() -> int:
             else:
                 frames[symbol] = frame
                 sources.append("parquet")
+        if index == 1 or index == len(symbols) or index % 10 == 0:
+            print(f"  loaded {index}/{len(symbols)}", flush=True)
 
-    print(f"Evaluating {len(frames)} symbols ({', '.join(sorted(set(sources)))})")
+    print(
+        f"Evaluating {len(frames)} symbols "
+        f"({', '.join(sorted(set(sources)))}, stride={config.stride})",
+        flush=True,
+    )
     report = engine.evaluate_universe(frames)
-    print(format_report(report))
+    print(format_report(report), flush=True)
     paths = engine.export_all(report)
-    print("\nGenerated files:")
+    print("\nGenerated files:", flush=True)
     for key, path in sorted(paths.items()):
-        print(f"  [{key}] {path}")
+        print(f"  [{key}] {path}", flush=True)
     return 0 if report.professional_recommended or report.overall_improvement else 0
 
 
