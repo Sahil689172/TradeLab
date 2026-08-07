@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
+import numpy as np
 import pandas as pd
 
 
@@ -222,16 +223,16 @@ def plot_rolling_metric(
     plt = _plt()
     fig, ax = plt.subplots(figsize=(10, 4))
     if equity is not None and len(equity) > window + 2:
-        rets = equity.pct_change()
+        rets = equity.astype(float).pct_change()
         if metric == "sharpe":
-            roll = (
-                rets.rolling(window).mean()
-                / rets.rolling(window).std().replace(0, pd.NA)
-                * (252**0.5)
-            )
+            std = rets.rolling(window).std().replace(0, np.nan)
+            roll = rets.rolling(window).mean() / std * (252**0.5)
         else:  # win rate proxy from positive daily returns
             roll = rets.rolling(window).apply(lambda x: (x > 0).mean(), raw=False)
-        ax.plot(roll.index, roll.values, linewidth=1.2)
+        # Matplotlib cannot plot pandas NAType; coerce to float and drop gaps.
+        roll = pd.to_numeric(roll, errors="coerce").dropna()
+        if not roll.empty:
+            ax.plot(roll.index, roll.to_numpy(dtype=float), linewidth=1.2)
     ax.set_title(title)
     ax.grid(True, alpha=0.3)
     return _save(fig, path)
