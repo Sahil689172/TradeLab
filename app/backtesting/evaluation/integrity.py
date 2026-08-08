@@ -124,33 +124,85 @@ def merge_per_symbol_full_equity(
 
 
 @dataclass
+class RawTradeRecord:
+    entry_timestamp: str
+    exit_timestamp: str
+    entry_price: float
+    exit_price: float
+    gross_pnl: float
+    net_pnl: float
+    holding_days: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "entry_timestamp": self.entry_timestamp,
+            "exit_timestamp": self.exit_timestamp,
+            "entry_price": self.entry_price,
+            "exit_price": self.exit_price,
+            "gross_pnl": self.gross_pnl,
+            "net_pnl": self.net_pnl,
+            "holding_days": self.holding_days,
+        }
+
+
+@dataclass
 class RawSignalDiagnostic:
-    """Counts for raw-mode signal path before professional filters."""
+    """Counts for raw-mode signal path (technical crosses vs strategy signals)."""
 
     symbol: str
     bars_examined: int = 0
+    warmup_bars: int = 0
+    bars_in_frame: int = 0
+    ema20_available: bool = False
+    ema50_available: bool = False
+    first_valid_timestamp: str | None = None
+    last_valid_timestamp: str | None = None
     cross_above_count: int = 0
     cross_below_count: int = 0
     buy_count: int = 0
+    sell_count: int = 0
     exit_count: int = 0
     hold_count: int = 0
     blocked_adx: int = 0
     blocked_close_above_slow: int = 0
     blocked_both: int = 0
+    trade_count: int = 0
+    trades: list[RawTradeRecord] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+
+    @property
+    def raw_buy_count(self) -> int:
+        return self.buy_count
+
+    @property
+    def raw_sell_or_exit_count(self) -> int:
+        return self.sell_count + self.exit_count
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "symbol": self.symbol,
+            "bars_in_frame": self.bars_in_frame,
+            "warmup_bars": self.warmup_bars,
             "bars_examined": self.bars_examined,
+            "ema20_available": self.ema20_available,
+            "ema50_available": self.ema50_available,
+            "first_valid_timestamp": self.first_valid_timestamp,
+            "last_valid_timestamp": self.last_valid_timestamp,
             "cross_above_count": self.cross_above_count,
             "cross_below_count": self.cross_below_count,
+            "raw_buy_count": self.buy_count,
+            "raw_sell_count": self.sell_count,
+            "raw_exit_count": self.exit_count,
+            "raw_sell_or_exit_count": self.raw_sell_or_exit_count,
+            "hold_count": self.hold_count,
+            # Back-compat aliases used by earlier A4Y.1.7 consumers
             "buy_count": self.buy_count,
             "exit_count": self.exit_count,
-            "hold_count": self.hold_count,
             "blocked_adx": self.blocked_adx,
             "blocked_close_above_slow": self.blocked_close_above_slow,
             "blocked_both": self.blocked_both,
+            "trade_count": self.trade_count,
+            "trades": [t.as_dict() for t in self.trades],
             "notes": list(self.notes),
         }
 
@@ -165,16 +217,30 @@ def diagnose_raw_signals(
 ) -> RawSignalDiagnostic:
     """Walk bars and count raw crosses / BUY / EXIT / HOLD with block reasons.
 
-    Does not alter strategy logic — only observes ``generate_signal`` and
-    internal snapshot fields when available.
+    Ensures Feature Engine indicators are present (canonical modules only).
+    Separates technical crossover events from actual strategy signals.
+    Reconstructs long-only trades from BUY → SELL/EXIT pairs (no isolated SELL).
+    Does not alter strategy thresholds or logic.
     """
+    from app.feature_engine.strategy_frame import ensure_strategy_indicators
+
     resolved = (
         symbol.strip().upper()
         if symbol
         else resolve_symbol_from_features(features) or strategy.active_symbol
     )
     diag = RawSignalDiagnostic(symbol=resolved)
-    frame = attach_symbol(features.copy(), resolved)
+    frame = ensure_strategy_indicators(attach_symbol(features.copy(), resolved))
+    diag.bars_in_frame = len(frame)
+    diag.ema20_available = "ema_20" in frame.columns
+    diag.ema50_available = "ema_50" in frame.columns
+    if not diag.ema20_available or not diag.ema50_available:
+        diag.notes.append(
+            "ema_20/ema_50 still missing after ensure_strategy_indicators — "
+            "OHLCV may be incomplete.",
+        )
+        return diag
+
     try:
         strategy.validate(frame)
         prepared = strategy.prepare(frame)
@@ -184,11 +250,26 @@ def diagnose_raw_signals(
 
     n = len(prepared)
     start = min(max(min_history_bars, 2), n)
+    diag.warmup_bars = start
+    if n >= start:
+        diag.first_valid_timestamp = str(
+            pd.Timestamp(prepared.iloc[start - 1]["date"]).date(),
+        )
+        diag.last_valid_timestamp = str(
+            pd.Timestamp(prepared.iloc[-1]["date"]).date(),
+        )
+
+    # Long-only trade reconstruction (unit size; costs=0 for diagnostic clarity)
+    open_entry_ts: pd.Timestamp | None = None
+    open_entry_px: float | None = None
+
     for cut in range(start, n + 1, max(stride, 1)):
         window = prepared.iloc[:cut]
+        row = window.iloc[-1]
+        ts = pd.Timestamp(row["date"])
+        close = float(row["close"])
         diag.bars_examined += 1
         try:
-            # Prefer snapshot for cross/block attribution when strategy exposes it.
             snapshot = None
             if hasattr(strategy, "_snapshot"):
                 snapshot = strategy._snapshot(window)  # noqa: SLF001 — audit probe
@@ -200,8 +281,43 @@ def diagnose_raw_signals(
             sig = signal.signal
             if sig is SignalType.BUY:
                 diag.buy_count += 1
-            elif sig in {SignalType.SELL, SignalType.EXIT}:
+                if open_entry_ts is None:
+                    open_entry_ts = ts
+                    open_entry_px = close
+            elif sig is SignalType.SELL:
+                diag.sell_count += 1
+                if open_entry_ts is not None and open_entry_px is not None:
+                    gross = close - open_entry_px
+                    diag.trades.append(
+                        RawTradeRecord(
+                            entry_timestamp=str(open_entry_ts.date()),
+                            exit_timestamp=str(ts.date()),
+                            entry_price=float(open_entry_px),
+                            exit_price=close,
+                            gross_pnl=float(gross),
+                            net_pnl=float(gross),
+                            holding_days=max((ts.date() - open_entry_ts.date()).days, 0),
+                        ),
+                    )
+                    open_entry_ts = None
+                    open_entry_px = None
+            elif sig is SignalType.EXIT:
                 diag.exit_count += 1
+                if open_entry_ts is not None and open_entry_px is not None:
+                    gross = close - open_entry_px
+                    diag.trades.append(
+                        RawTradeRecord(
+                            entry_timestamp=str(open_entry_ts.date()),
+                            exit_timestamp=str(ts.date()),
+                            entry_price=float(open_entry_px),
+                            exit_price=close,
+                            gross_pnl=float(gross),
+                            net_pnl=float(gross),
+                            holding_days=max((ts.date() - open_entry_ts.date()).days, 0),
+                        ),
+                    )
+                    open_entry_ts = None
+                    open_entry_px = None
             else:
                 diag.hold_count += 1
                 if snapshot is not None and snapshot.cross_above.value:
@@ -218,10 +334,14 @@ def diagnose_raw_signals(
             if len(diag.notes) > 20:
                 break
 
-    if diag.cross_above_count == 0:
+    diag.trade_count = len(diag.trades)
+
+    if diag.bars_examined == 0:
+        diag.notes.append("No bars examined (frame shorter than warmup).")
+    elif diag.cross_above_count == 0:
         diag.notes.append(
             "No ema_fast/ema_slow cross-above events in examined bars "
-            "(raw BUY requires a true cross).",
+            "(raw BUY requires a true cross + ADX + close>slow).",
         )
     elif diag.buy_count == 0:
         diag.notes.append(

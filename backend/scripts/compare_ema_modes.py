@@ -89,7 +89,7 @@ def load_features(symbol: str, storage_dir: Path) -> pd.DataFrame | None:
         load_strategy_features,
     )
 
-    frame = load_strategy_features(symbol, storage_dir)
+    frame = load_strategy_features(symbol, storage_dir, ensure_indicators=True)
     if frame is None or not features_include_ohlcv(frame):
         return None
     return attach_symbol(frame, symbol)

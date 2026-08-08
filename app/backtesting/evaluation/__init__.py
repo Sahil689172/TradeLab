@@ -17,12 +17,14 @@ from app.backtesting.evaluation.metrics import (
 )
 from app.backtesting.evaluation.integrity import (
     CapitalAllocationMode,
+    RawSignalDiagnostic,
     diagnose_raw_signals,
     merge_equal_weight_equity,
     periods_per_year_for_stride,
     resolution_for_stride,
     validate_evaluation_metrics,
 )
+from app.feature_engine.strategy_frame import ensure_strategy_indicators
 from app.backtesting.evaluation.reports import format_console_report, format_markdown_report
 from app.backtesting.evaluation.runner import (
     EMAEvaluationEngine,
@@ -57,6 +59,7 @@ __all__ = [
     "FilterEffectivenessRow",
     "MetricComparison",
     "PerformanceMetrics",
+    "RawSignalDiagnostic",
     "SignalFunnelMetrics",
     "StatisticalSummary",
     "Verdict",
@@ -64,6 +67,7 @@ __all__ = [
     "compare_metrics",
     "compute_performance",
     "diagnose_raw_signals",
+    "ensure_strategy_indicators",
     "format_console_report",
     "format_markdown_report",
     "format_report",

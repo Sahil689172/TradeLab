@@ -55,12 +55,13 @@ class EvaluationConfig:
 
 
 def load_symbol_features(symbol: str, storage_dir: Path) -> pd.DataFrame | None:
+    """Load OHLCV+indicators for evaluation; compute missing indicators canonically."""
     from app.feature_engine.strategy_frame import (
         features_include_ohlcv,
         load_strategy_features,
     )
 
-    frame = load_strategy_features(symbol, storage_dir)
+    frame = load_strategy_features(symbol, storage_dir, ensure_indicators=True)
     if frame is None or not features_include_ohlcv(frame):
         return None
     return attach_symbol(frame, symbol)

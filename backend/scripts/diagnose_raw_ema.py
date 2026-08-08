@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""A4Y.1.7 — Diagnose why Raw EMA produces zero trades.
+"""A4Y.1.7.1 — Diagnose Raw EMA after canonical Feature Engine preparation.
 
-Does not modify strategy logic. Counts crosses / BUY / EXIT / HOLD and
-attributes blocked cross-above events to ADX or close>slow gates.
+Does not modify strategy logic. Loads OHLCV, attaches missing indicators via
+``ensure_strategy_indicators`` (compute_trend_features / volume / ATR / RSI),
+then runs the existing RAW EMA strategy.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.backtesting.evaluation.integrity import diagnose_raw_signals
 from app.backtesting.evaluation.runner import load_symbol_features, synthetic_features
 from app.core.config import get_settings
+from app.feature_engine.strategy_frame import ensure_strategy_indicators
 from app.strategies.ema_trend import EMATrendConfig, EMATrendStrategy
 
 
@@ -43,9 +45,12 @@ def main() -> int:
     else:
         frame = load_symbol_features(symbol, storage_dir)
         if frame is None:
-            print(f"ERROR: no features for {symbol}")
+            print(f"ERROR: no OHLCV/features for {symbol} under {storage_dir}")
             return 2
-        source = "parquet"
+        source = "parquet+ensure_strategy_indicators"
+
+    # Defensive: load_symbol_features already ensures indicators for evaluation.
+    frame = ensure_strategy_indicators(frame)
 
     strategy = EMATrendStrategy(
         EMATrendConfig(mode="raw", symbol=symbol, min_history_bars=args.min_history_bars),
@@ -59,20 +64,35 @@ def main() -> int:
     )
     payload = diag.as_dict()
     payload["source"] = source
-    payload["bars_in_frame"] = len(frame)
     payload["stride"] = args.stride
+    payload["crossover_definition"] = {
+        "cross_above": "prev ema20<=ema50 AND curr ema20>ema50",
+        "cross_below": "prev ema20>=ema50 AND curr ema20<ema50",
+        "source": "app.conditions.operators (existing strategy semantics)",
+    }
     print(json.dumps(payload, indent=2))
     print()
     print("Interpretation:")
+    if diag.bars_examined <= 0:
+        print("  FAIL: bars_examined=0 — feature preparation still broken.")
+        return 1
     if diag.buy_count == 0 and diag.cross_above_count == 0:
-        print("  A/B: No raw ema20/ema50 cross-above events → genuine zero BUYs.")
+        print(
+            "  REAL ZERO BUYs: no ema20/ema50 cross-above events after warmup "
+            "(pipeline OK; strategy genuinely idle on entries).",
+        )
     elif diag.buy_count == 0:
         print(
-            "  A: Crosses exist but ADX/close>slow gates block BUY — "
-            "evaluation is detecting signals; raw strategy produces 0 trades.",
+            "  REAL ZERO BUYs: crosses exist but ADX/close>slow gates block BUY "
+            f"(blocked_adx={diag.blocked_adx}, "
+            f"blocked_close={diag.blocked_close_above_slow}, "
+            f"blocked_both={diag.blocked_both}).",
         )
     else:
-        print(f"  Raw BUY signals exist ({diag.buy_count}). Check trade conversion next.")
+        print(
+            f"  Raw BUY signals exist ({diag.buy_count}); "
+            f"reconstructed trades={diag.trade_count}.",
+        )
     return 0
 
 

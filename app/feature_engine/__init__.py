@@ -7,12 +7,14 @@ from app.feature_engine.strategy_frame import (
     features_include_ohlcv,
     load_strategy_features,
     merge_ohlcv_features,
+    ensure_strategy_indicators,
 )
 
 __all__ = [
     "FeatureEngine",
     "FeaturePipeline",
     "FeatureRepository",
+    "ensure_strategy_indicators",
     "features_include_ohlcv",
     "load_strategy_features",
     "merge_ohlcv_features",
