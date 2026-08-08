@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Compare RAW vs PROFESSIONAL EMA Trend (Phase A4Y.1).
+"""Compare RAW vs PROFESSIONAL EMA using the canonical evaluation path (A4Y.1.7.2).
+
+Uses the same feature prep + backtester as evaluate_ema_professional.py and the
+same raw diagnostic as diagnose_raw_ema.py. Does NOT use the truncated
+StrategyAuditor last-N-window walk (that path disagreed with the evaluator).
 
 Examples:
 
-    python backend/scripts/compare_ema_modes.py --symbol RELIANCE --synthetic
-    python backend/scripts/compare_ema_modes.py --symbol RELIANCE --symbol TCS
+    python backend/scripts/compare_ema_modes.py --symbol RELIANCE
+    python backend/scripts/compare_ema_modes.py --symbol RELIANCE --stride 1
 """
 
 from __future__ import annotations
@@ -14,114 +18,33 @@ import json
 import sys
 from pathlib import Path
 
-import pandas as pd
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.backtesting.evaluation.canonical import (
+    compare_ema_modes_canonical,
+    load_canonical_features,
+)
+from app.backtesting.evaluation.runner import synthetic_features
 from app.core.config import get_settings
-from app.strategies.ema_trend import EMATrendConfig, EMATrendStrategy
-from app.strategy_engine.audit import StrategyAuditor, export_audit_json, format_signal_funnel
-from app.strategy_engine.symbols import attach_symbol
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Compare RAW vs PROFESSIONAL EMA")
+    parser = argparse.ArgumentParser(
+        description="Compare RAW vs PROFESSIONAL EMA (canonical evaluation path)",
+    )
     parser.add_argument("--symbol", action="append", dest="symbols", help="Symbol(s)")
     parser.add_argument("--synthetic", action="store_true")
-    parser.add_argument("--stride", type=int, default=10)
-    parser.add_argument("--max-evaluations", type=int, default=30)
-    parser.add_argument("--min-bars", type=int, default=60)
+    parser.add_argument(
+        "--stride",
+        type=int,
+        default=1,
+        help="Bar stride (default 1 = FULL_BACKTEST, same as evaluate --full)",
+    )
+    parser.add_argument("--min-history-bars", type=int, default=60)
     parser.add_argument("--out-dir", default="backend/data/audit")
     return parser.parse_args()
-
-
-def synthetic_features(*, bars: int = 150, symbol: str = "RELIANCE") -> pd.DataFrame:
-    sessions: list[pd.Timestamp] = []
-    day = pd.Timestamp("2024-06-03 09:15")
-    while len(sessions) < bars:
-        for minute in range(0, 6 * 60, 15):
-            sessions.append(day + pd.Timedelta(minutes=minute))
-            if len(sessions) >= bars:
-                break
-        day = day + pd.Timedelta(days=1)
-        while day.weekday() >= 5:
-            day = day + pd.Timedelta(days=1)
-
-    rows = []
-    price = 100.0
-    for index, ts in enumerate(sessions[:bars]):
-        price = price + (0.45 if index % 8 else -0.25)
-        close = price
-        # Inject occasional true crosses near the end
-        ema9 = close * (0.998 if index < bars - 2 else (0.997 if index == bars - 2 else 1.001))
-        ema21 = close * 0.999
-        if index == bars - 1:
-            ema9 = close * 1.002
-            ema21 = close * 0.999
-        rows.append(
-            {
-                "date": ts,
-                "open": close - 0.1,
-                "high": close + 0.8,
-                "low": close - 0.8,
-                "close": close,
-                "volume": 120_000 + index * 800,
-                "volume_sma_20": 100_000,
-                "relative_volume_20": 1.4,
-                "atr_14": 1.5,
-                "ema_9": ema9,
-                "ema_20": close * 1.001,
-                "ema_21": ema21,
-                "ema_50": close * 0.997,
-                "ema_200": close * 0.95,
-                "adx_14": 28.0,
-                "rsi_14": 55.0,
-            },
-        )
-    return attach_symbol(pd.DataFrame(rows), symbol)
-
-
-def load_features(symbol: str, storage_dir: Path) -> pd.DataFrame | None:
-    from app.feature_engine.strategy_frame import (
-        features_include_ohlcv,
-        load_strategy_features,
-    )
-
-    frame = load_strategy_features(symbol, storage_dir, ensure_indicators=True)
-    if frame is None or not features_include_ohlcv(frame):
-        return None
-    return attach_symbol(frame, symbol)
-
-
-def audit_mode(
-    *,
-    mode: str,
-    features: pd.DataFrame,
-    symbol: str,
-    stride: int,
-    max_evaluations: int,
-    min_bars: int,
-):
-    if mode == "professional":
-        strategy = EMATrendStrategy(
-            EMATrendConfig.professional(symbol=symbol, min_history_bars=min(min_bars, 60)),
-        )
-    else:
-        strategy = EMATrendStrategy(
-            EMATrendConfig(mode="raw", symbol=symbol, min_history_bars=min(min_bars, 60)),
-        )
-    auditor = StrategyAuditor(
-        min_bars=min_bars,
-        stride=stride,
-        max_evaluations=max_evaluations,
-        apply_filters=False,
-        enable_filter_pipeline_config=False,
-    )
-    metrics = auditor.audit_one(strategy, features, symbol=symbol)
-    report = auditor.build_report([metrics], symbol=symbol, metadata={"mode": mode})
-    return strategy, metrics, report
 
 
 def main() -> int:
@@ -135,68 +58,92 @@ def main() -> int:
     comparison_rows: list[dict] = []
 
     print("=" * 64)
-    print("TradeLab — RAW vs PROFESSIONAL EMA Comparison (A4Y.1)")
+    print("TradeLab — RAW vs PROFESSIONAL EMA Comparison (A4Y.1.7.2)")
+    print("Canonical path: diagnose + long-only backtester (not auditor sample)")
     print("=" * 64)
 
     for symbol in symbols:
         if args.synthetic:
-            features = synthetic_features(symbol=symbol)
+            features = synthetic_features(symbol=symbol, bars=260)
             source = "synthetic"
         else:
-            features = load_features(symbol, storage_dir)
+            features = load_canonical_features(symbol, storage_dir)
             if features is None:
-                features = synthetic_features(symbol=symbol)
+                features = synthetic_features(symbol=symbol, bars=260)
                 source = "synthetic (no parquet)"
             else:
-                source = "parquet"
+                source = "parquet+ensure_strategy_indicators"
 
-        print(f"\n--- {symbol} ({source}, {len(features)} bars) ---")
-        for mode in ("raw", "professional"):
-            _strategy, metrics, report = audit_mode(
-                mode=mode,
-                features=features,
-                symbol=symbol,
-                stride=args.stride,
-                max_evaluations=args.max_evaluations,
-                min_bars=args.min_bars,
-            )
-            print(f"\n[{mode.upper()}]")
+        result = compare_ema_modes_canonical(
+            symbol,
+            features,
+            stride=args.stride,
+            min_history_bars=args.min_history_bars,
+        )
+        diag = result.raw_diagnostic
+        raw = result.raw
+        pro = result.professional
+
+        print(f"\n--- {symbol} ({source}, {result.bars_in_frame} bars) ---")
+        print(
+            f"Resolution: {result.evaluation_resolution} | stride={result.stride}",
+        )
+        print("\n[TECHNICAL CROSSOVERS]")
+        print(
+            f"  cross_above={diag.cross_above_count} "
+            f"cross_below={diag.cross_below_count}",
+        )
+        print("\n[RAW STRATEGY SIGNALS]")
+        print(
+            f"  BUY={diag.buy_count} SELL={diag.sell_count} "
+            f"HOLD={diag.hold_count} EXIT={diag.exit_count}",
+        )
+        print("\n[RAW EXECUTED TRADES]")
+        print(
+            f"  trade_count={raw.trade_count} "
+            f"(diagnostic reconstructed={diag.trade_count})",
+        )
+        print(
+            f"  backtest signals: BUY={raw.buy_signals} SELL={raw.sell_signals} "
+            f"HOLD={raw.hold_signals} EXIT={raw.exit_signals}",
+        )
+        print("\n[PROFESSIONAL STRATEGY SIGNALS / TRADES]")
+        print(
+            f"  BUY={pro.buy_signals} SELL={pro.sell_signals} "
+            f"HOLD={pro.hold_signals} EXIT={pro.exit_signals}",
+        )
+        print(f"  trade_count={pro.trade_count}")
+        if pro.funnel:
             print(
-                f"  BUY={metrics.buy_signals} SELL={metrics.sell_signals} "
-                f"HOLD={metrics.hold_signals} EXIT={metrics.exit_signals}",
+                "  funnel: "
+                f"raw_buy={pro.funnel.get('raw_buy', 0)} "
+                f"final_buy={pro.funnel.get('final_buy', 0)} "
+                f"rejected_ema200={pro.funnel.get('rejected_ema200', 0)} "
+                f"rejected_adx={pro.funnel.get('rejected_adx', 0)} "
+                f"rejected_volume={pro.funnel.get('rejected_volume', 0)}",
             )
-            print(
-                f"  avg_conf={metrics.average_confidence:.3f} "
-                f"avg_rr={metrics.average_risk_reward:.2f} "
-                f"avg_hold={metrics.average_hold:.1f}",
-            )
-            if mode == "professional":
-                print(format_signal_funnel(metrics))
-            path = out_dir / f"{symbol}_ema_{mode}_audit.json"
-            export_audit_json(report, path)
-            print(f"  Wrote {path}")
-            comparison_rows.append(
-                {
-                    "symbol": symbol,
-                    "mode": mode,
-                    "buy": metrics.buy_signals,
-                    "sell": metrics.sell_signals,
-                    "hold": metrics.hold_signals,
-                    "exit": metrics.exit_signals,
-                    "average_confidence": metrics.average_confidence,
-                    "average_risk_reward": metrics.average_risk_reward,
-                    "average_hold": metrics.average_hold,
-                    "raw_buy": metrics.raw_buy_signals,
-                    "raw_sell": metrics.raw_sell_signals,
-                    "rejected_ema200": metrics.rejected_ema200,
-                    "rejected_adx": metrics.rejected_adx,
-                    "rejected_volume": metrics.rejected_volume,
-                    "final_buy": metrics.final_buy_signals,
-                    "final_sell": metrics.final_sell_signals,
-                    "funnel_acceptance_rate": metrics.funnel_acceptance_rate,
-                    "funnel_rejection_rate": metrics.funnel_rejection_rate,
-                },
-            )
+
+        path = out_dir / f"{symbol}_ema_canonical_comparison.json"
+        path.write_text(json.dumps(result.as_dict(), indent=2), encoding="utf-8")
+        print(f"  Wrote {path}")
+
+        comparison_rows.append(
+            {
+                "symbol": symbol,
+                "source": source,
+                "evaluation_resolution": result.evaluation_resolution,
+                "stride": result.stride,
+                "bars_in_frame": result.bars_in_frame,
+                "cross_above": diag.cross_above_count,
+                "cross_below": diag.cross_below_count,
+                "raw_buy": diag.buy_count,
+                "raw_exit": diag.exit_count,
+                "raw_trades": raw.trade_count,
+                "professional_buy": pro.buy_signals,
+                "professional_sell": pro.sell_signals,
+                "professional_trades": pro.trade_count,
+            },
+        )
 
     summary_path = out_dir / "ema_raw_vs_professional_comparison.json"
     summary_path.write_text(json.dumps(comparison_rows, indent=2), encoding="utf-8")

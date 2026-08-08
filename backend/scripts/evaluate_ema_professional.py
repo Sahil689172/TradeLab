@@ -158,9 +158,9 @@ def main() -> int:
             frames[symbol] = synthetic_features(symbol=symbol, bars=bars)
             sources.append("synthetic")
         else:
-            from app.backtesting.evaluation.runner import load_symbol_features
+            from app.backtesting.evaluation.canonical import load_canonical_features
 
-            frame = load_symbol_features(symbol, storage_dir)
+            frame = load_canonical_features(symbol, storage_dir)
             if frame is None:
                 frames[symbol] = synthetic_features(symbol=symbol, bars=bars)
                 sources.append("synthetic-fallback")

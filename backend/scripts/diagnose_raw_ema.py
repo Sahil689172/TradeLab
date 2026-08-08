@@ -18,9 +18,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.backtesting.evaluation.integrity import diagnose_raw_signals
-from app.backtesting.evaluation.runner import load_symbol_features, synthetic_features
+from app.backtesting.evaluation.canonical import load_canonical_features
+from app.backtesting.evaluation.runner import synthetic_features
 from app.core.config import get_settings
-from app.feature_engine.strategy_frame import ensure_strategy_indicators
 from app.strategies.ema_trend import EMATrendConfig, EMATrendStrategy
 
 
@@ -43,14 +43,11 @@ def main() -> int:
         frame = synthetic_features(symbol=symbol, bars=260)
         source = "synthetic"
     else:
-        frame = load_symbol_features(symbol, storage_dir)
+        frame = load_canonical_features(symbol, storage_dir)
         if frame is None:
             print(f"ERROR: no OHLCV/features for {symbol} under {storage_dir}")
             return 2
         source = "parquet+ensure_strategy_indicators"
-
-    # Defensive: load_symbol_features already ensures indicators for evaluation.
-    frame = ensure_strategy_indicators(frame)
 
     strategy = EMATrendStrategy(
         EMATrendConfig(mode="raw", symbol=symbol, min_history_bars=args.min_history_bars),

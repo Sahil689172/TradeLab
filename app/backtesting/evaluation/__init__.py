@@ -15,6 +15,11 @@ from app.backtesting.evaluation.metrics import (
     sortino_ratio,
     ulcer_index,
 )
+from app.backtesting.evaluation.canonical import (
+    CanonicalEMAComparison,
+    compare_ema_modes_canonical,
+    load_canonical_features,
+)
 from app.backtesting.evaluation.integrity import (
     CapitalAllocationMode,
     RawSignalDiagnostic,
@@ -30,6 +35,7 @@ from app.backtesting.evaluation.runner import (
     EMAEvaluationEngine,
     EvaluationConfig,
     format_report,
+    load_symbol_features,
     synthetic_features,
 )
 from app.backtesting.evaluation.schemas import (
@@ -51,6 +57,7 @@ from app.backtesting.evaluation.statistics import (
 __all__ = [
     "BacktestResult",
     "BacktestSettings",
+    "CanonicalEMAComparison",
     "CapitalAllocationMode",
     "EMAEvaluationEngine",
     "EvalTrade",
@@ -64,6 +71,7 @@ __all__ = [
     "StatisticalSummary",
     "Verdict",
     "cagr",
+    "compare_ema_modes_canonical",
     "compare_metrics",
     "compute_performance",
     "diagnose_raw_signals",
@@ -71,6 +79,8 @@ __all__ = [
     "format_console_report",
     "format_markdown_report",
     "format_report",
+    "load_canonical_features",
+    "load_symbol_features",
     "max_drawdown",
     "merge_equal_weight_equity",
     "overall_recommendation",
