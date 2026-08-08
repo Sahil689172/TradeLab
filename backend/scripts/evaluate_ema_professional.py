@@ -26,6 +26,7 @@ from app.backtesting.evaluation import (
     format_report,
     synthetic_features,
 )
+from app.backtesting.evaluation.integrity import CapitalAllocationMode
 from app.core.config import get_settings
 from app.services.universe_validation.discovery import (
     discover_ohlcv_symbols,
@@ -68,7 +69,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--percent", type=float, default=95.0)
     parser.add_argument("--slippage-bps", type=float, default=5.0)
     parser.add_argument("--brokerage-rate", type=float, default=0.0003)
-    parser.add_argument("--stride", type=int, default=1)
+    parser.add_argument(
+        "--stride",
+        type=int,
+        default=1,
+        help="Bar stride. stride>1 is FAST_SAMPLED_EVALUATION (not a full backtest).",
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Force FULL_BACKTEST (stride=1). Overrides auto-throttle.",
+    )
+    parser.add_argument(
+        "--capital-mode",
+        choices=["equal_weight", "per_symbol_full"],
+        default="equal_weight",
+        help="Multi-stock capital allocation (default equal_weight sleeves).",
+    )
     parser.add_argument("--min-history-bars", type=int, default=60)
     parser.add_argument("--no-charts", action="store_true")
     return parser.parse_args()
@@ -104,19 +121,21 @@ def main() -> int:
         print("ERROR: No symbols resolved. Use --synthetic or provide parquet data.")
         return 2
 
+    stride = 1 if args.full else args.stride
     config = EvaluationConfig(
         initial_capital=args.initial_capital,
         percent=args.percent,
         slippage_bps=args.slippage_bps,
         brokerage_rate=args.brokerage_rate,
         min_history_bars=args.min_history_bars,
-        stride=args.stride,
+        stride=stride,
         out_dir=Path(args.out_dir),
         generate_charts=not args.no_charts,
+        capital_mode=CapitalAllocationMode(args.capital_mode),
     )
-    # Auto-throttle large universes unless the user overrode stride.
-    # Default stride=1 on ~2500 daily bars × 50 symbols × 2 modes is too slow.
-    if args.stride == 1:
+    # Auto-throttle large universes unless --full or explicit --stride was set.
+    # Sampled runs are labeled FAST_SAMPLED_EVALUATION and cannot recommend YES.
+    if not args.full and args.stride == 1:
         if len(symbols) > 50:
             config.stride = 20
         elif len(symbols) > 10:
@@ -124,7 +143,7 @@ def main() -> int:
         if config.stride != 1:
             print(
                 f"Note: universe size {len(symbols)} — using stride={config.stride} "
-                f"for speed (override with --stride N)",
+                f"(FAST_SAMPLED_EVALUATION). Use --full for FULL_BACKTEST.",
                 flush=True,
             )
 

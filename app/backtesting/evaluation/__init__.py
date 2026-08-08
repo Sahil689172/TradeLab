@@ -15,6 +15,14 @@ from app.backtesting.evaluation.metrics import (
     sortino_ratio,
     ulcer_index,
 )
+from app.backtesting.evaluation.integrity import (
+    CapitalAllocationMode,
+    diagnose_raw_signals,
+    merge_equal_weight_equity,
+    periods_per_year_for_stride,
+    resolution_for_stride,
+    validate_evaluation_metrics,
+)
 from app.backtesting.evaluation.reports import format_console_report, format_markdown_report
 from app.backtesting.evaluation.runner import (
     EMAEvaluationEngine,
@@ -41,6 +49,7 @@ from app.backtesting.evaluation.statistics import (
 __all__ = [
     "BacktestResult",
     "BacktestSettings",
+    "CapitalAllocationMode",
     "EMAEvaluationEngine",
     "EvalTrade",
     "EvaluationConfig",
@@ -54,17 +63,22 @@ __all__ = [
     "cagr",
     "compare_metrics",
     "compute_performance",
+    "diagnose_raw_signals",
     "format_console_report",
     "format_markdown_report",
     "format_report",
     "max_drawdown",
+    "merge_equal_weight_equity",
     "overall_recommendation",
     "paired_trade_delta",
+    "periods_per_year_for_stride",
     "profit_factor",
+    "resolution_for_stride",
     "run_long_only_backtest",
     "sharpe_ratio",
     "sortino_ratio",
     "synthetic_features",
     "ulcer_index",
+    "validate_evaluation_metrics",
     "verdict_for",
 ]

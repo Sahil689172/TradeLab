@@ -158,8 +158,15 @@ def overall_recommendation(
     *,
     raw: PerformanceMetrics,
     professional: PerformanceMetrics,
+    validity_ok: bool = True,
+    validity_reasons: tuple[str, ...] = (),
 ) -> tuple[bool, bool, str]:
-    """Return (overall_improvement, recommended, executive_summary)."""
+    """Return (overall_improvement, recommended, executive_summary).
+
+    A4Y.1.7: recommendation is blocked when integrity validity gates fail
+    (zero baseline trades, MaxDD>100%, sampled stride, non-finite metrics, etc.).
+    Comparative "improvement" may still be reported for diagnostics.
+    """
     key_metrics = {"sharpe_ratio", "max_drawdown", "return_pct", "win_rate", "profit_factor"}
     improved = 0
     worse = 0
@@ -171,24 +178,36 @@ def overall_recommendation(
         elif row.verdict is Verdict.WORSE:
             worse += 1
 
-    # Prefer professional if sharpe improved and drawdown not worse (or improved).
-    # If raw produced zero trades, do not treat its 0% drawdown as superior.
     sharpe_ok = professional.sharpe_ratio >= raw.sharpe_ratio - 1e-9
     if raw.total_trades == 0:
-        dd_ok = True
+        # Do not treat idle 0% drawdown as a superior baseline.
+        dd_ok = professional.max_drawdown <= 1.0 + 1e-9
     else:
         dd_ok = professional.max_drawdown <= raw.max_drawdown + 1e-9
     ret_ok = professional.return_pct >= raw.return_pct - 1e-9
-    overall = improved > worse and sharpe_ok
-    recommended = overall and dd_ok and (
-        statistics.overall_verdict is not Verdict.WORSE
+    overall = improved > worse and sharpe_ok and professional.total_trades > 0
+    recommended = bool(
+        validity_ok
+        and overall
+        and dd_ok
+        and statistics.overall_verdict is not Verdict.WORSE
     )
-    if recommended and not ret_ok and professional.sharpe_ratio > raw.sharpe_ratio:
-        # Still recommend on risk-adjusted grounds
+    if (
+        recommended
+        and not ret_ok
+        and professional.sharpe_ratio > raw.sharpe_ratio
+        and validity_ok
+    ):
         recommended = True
-    if raw.total_trades == 0 and professional.total_trades > 0 and sharpe_ok:
-        recommended = True
-        overall = True
+
+    gate_txt = ""
+    if not validity_ok:
+        recommended = False
+        gate_txt = (
+            " Validity gates FAILED ("
+            + ", ".join(validity_reasons)
+            + ") — recommendation forced NO."
+        )
 
     summary = (
         f"Professional EMA {'outperformed' if overall else 'did not clearly outperform'} "
@@ -198,5 +217,6 @@ def overall_recommendation(
         f"Return {raw.return_pct:.1%}→{professional.return_pct:.1%}. "
         f"Statistical verdict: {statistics.overall_verdict.value} ({statistics.significance}). "
         f"Recommended: {'YES' if recommended else 'NO'}."
+        f"{gate_txt}"
     )
     return overall, recommended, summary

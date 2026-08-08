@@ -9,10 +9,17 @@ def format_console_report(report: EvaluationReport) -> str:
     raw = report.raw
     pro = report.professional
     funnel = report.signal_funnel
+    meta = report.metadata or {}
+    validity = meta.get("validity") or {}
     lines = [
         "=" * 48,
         "TradeLab Professional EMA Evaluation",
         "=" * 48,
+        "",
+        "Evaluation Resolution",
+        str(meta.get("evaluation_resolution", "n/a")),
+        f"stride={meta.get('stride', 'n/a')}",
+        f"capital_mode={meta.get('capital_mode', 'n/a')}",
         "",
         "Universe",
         f"{len(report.symbols)} Stocks",
@@ -21,30 +28,36 @@ def format_console_report(report: EvaluationReport) -> str:
         f"{report.period_start or 'n/a'} - {report.period_end or 'n/a'}",
         "",
         "Raw",
-        f"Trades",
+        "Trades",
         f"{raw.total_trades}",
-        f"Win Rate",
+        "Win Rate",
         f"{raw.win_rate:.1%}",
-        f"Sharpe",
+        "Sharpe",
         f"{raw.sharpe_ratio:.2f}",
-        f"Max DD",
+        "Max DD",
         f"{raw.max_drawdown:.1%}",
-        f"Net Return",
+        "Net Return",
         f"{raw.return_pct:.1%}",
         "",
         "-" * 48,
         "",
         "Professional",
-        f"Trades",
+        "Trades",
         f"{pro.total_trades}",
-        f"Win Rate",
+        "Win Rate",
         f"{pro.win_rate:.1%}",
-        f"Sharpe",
+        "Sharpe",
         f"{pro.sharpe_ratio:.2f}",
-        f"Max DD",
+        "Max DD",
         f"{pro.max_drawdown:.1%}",
-        f"Net Return",
+        "Net Return",
         f"{pro.return_pct:.1%}",
+        "",
+        "-" * 48,
+        "",
+        "Validity",
+        "OK" if validity.get("ok", True) else "FAILED",
+        ", ".join(validity.get("reasons") or []) or "none",
         "",
         "-" * 48,
         "",
@@ -80,6 +93,8 @@ def format_console_report(report: EvaluationReport) -> str:
 def format_markdown_report(report: EvaluationReport) -> str:
     raw = report.raw
     pro = report.professional
+    meta = report.metadata or {}
+    validity = meta.get("validity") or {}
     lines = [
         f"# {report.title}",
         "",
@@ -87,6 +102,12 @@ def format_markdown_report(report: EvaluationReport) -> str:
         f"- Generated: `{report.generated_at.isoformat()}`",
         f"- Symbols ({len(report.symbols)}): {', '.join(report.symbols)}",
         f"- Period: {report.period_start or 'n/a'} → {report.period_end or 'n/a'}",
+        f"- Evaluation Resolution: `{meta.get('evaluation_resolution', 'n/a')}`",
+        f"- Stride: `{meta.get('stride', 'n/a')}`",
+        f"- Capital Mode: `{meta.get('capital_mode', 'n/a')}`",
+        f"- Cost Model: `{meta.get('cost_model', 'n/a')}`",
+        f"- Validity: `{'OK' if validity.get('ok', True) else 'FAILED'}` "
+        f"({', '.join(validity.get('reasons') or []) or 'none'})",
         "",
         "## Executive Summary",
         "",

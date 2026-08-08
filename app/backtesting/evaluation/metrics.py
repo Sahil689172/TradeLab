@@ -117,8 +117,13 @@ def compute_performance(
         for t in trades
     ]
 
-    gross_profit = sum(n for n in nets if n > 0)
-    gross_loss = sum(n for n in nets if n < 0)  # negative
+    # Prefer true gross fields when present (EvalTrade); fall back to net.
+    gross_values = [
+        float(t["gross_profit"]) if "gross_profit" in t else float(t["net_profit"])
+        for t in trades
+    ]
+    gross_profit = sum(g for g in gross_values if g > 0)
+    gross_loss = sum(g for g in gross_values if g < 0)  # negative
     net_profit = sum(nets)
     final_equity = (
         float(equity_curve.iloc[-1])
@@ -128,17 +133,31 @@ def compute_performance(
     return_pct = _safe_div(final_equity - initial_capital, initial_capital)
 
     if equity_curve is not None and len(equity_curve) >= 2:
-        rets = equity_curve.pct_change().dropna().tolist()
-        years = max(len(equity_curve) / periods_per_year, 1e-9)
-        max_dd, avg_dd, longest_dd = max_drawdown(equity_curve.tolist())
+        curve = (
+            equity_curve.astype(float)
+            .replace([np.inf, -np.inf], np.nan)
+            .dropna()
+        )
+        if hasattr(curve.index, "duplicated"):
+            curve = curve[~curve.index.duplicated(keep="last")].sort_index()
+        rets_series = curve.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+        rets = rets_series.tolist()
+        years = max(len(curve) / periods_per_year, 1e-9)
+        max_dd, avg_dd, longest_dd = max_drawdown(curve.tolist())
         vol = float(np.std(rets, ddof=1) * np.sqrt(periods_per_year)) if len(rets) > 1 else 0.0
         sharpe = sharpe_ratio(rets, periods_per_year=periods_per_year)
         sortino = sortino_ratio(rets, periods_per_year=periods_per_year)
-        ulcer = ulcer_index(equity_curve.tolist())
+        ulcer = ulcer_index(curve.tolist())
         # Exposure: fraction of bars with open risk approximated via holding sum / span
         total_hold = sum(holdings)
-        span_days = max((equity_curve.index[-1] - equity_curve.index[0]).days, 1) if hasattr(equity_curve.index[0], "day") else max(len(equity_curve), 1)
+        span_days = (
+            max((curve.index[-1] - curve.index[0]).days, 1)
+            if len(curve) and hasattr(curve.index[0], "day")
+            else max(len(curve), 1)
+        )
         exposure = min(_safe_div(total_hold, float(span_days)), 1.0)
+        if len(curve):
+            final_equity = float(curve.iloc[-1])
     else:
         years = max(sum(holdings) / 252.0, 1e-9) if holdings else 1e-9
         max_dd, avg_dd, longest_dd = 0.0, 0.0, 0

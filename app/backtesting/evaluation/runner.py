@@ -17,6 +17,14 @@ from app.backtesting.evaluation.export import (
     export_metrics_csv,
     export_trades_csv,
 )
+from app.backtesting.evaluation.integrity import (
+    CapitalAllocationMode,
+    merge_equal_weight_equity,
+    merge_per_symbol_full_equity,
+    periods_per_year_for_stride,
+    resolution_for_stride,
+    validate_evaluation_metrics,
+)
 from app.backtesting.evaluation.metrics import compute_performance
 from app.backtesting.evaluation.reports import format_console_report
 from app.backtesting.evaluation.schemas import EvaluationReport
@@ -40,6 +48,10 @@ class EvaluationConfig:
     stride: int = 1
     out_dir: Path = Path("backend/data/evaluation")
     generate_charts: bool = True
+    # A4Y.1.7: multi-stock capital policy (default = institutional equal-weight sleeves)
+    capital_mode: CapitalAllocationMode = CapitalAllocationMode.EQUAL_WEIGHT
+    # Transaction-cost model intentionally limited to brokerage + slippage (no STT/GST/etc.)
+    cost_model: str = "brokerage_and_slippage_only"
 
 
 def load_symbol_features(symbol: str, storage_dir: Path) -> pd.DataFrame | None:
@@ -104,22 +116,15 @@ def synthetic_features(*, bars: int = 260, symbol: str = "RELIANCE") -> pd.DataF
     return attach_symbol(pd.DataFrame(rows), symbol)
 
 
-def _merge_equity(curves: list[pd.Series], initial: float) -> pd.Series | None:
-    if not curves:
-        return None
-    # Align by taking the first curve scaled; for multi-symbol sum relative PnL
-    base = None
-    for curve in curves:
-        if curve is None or not len(curve):
-            continue
-        rel = curve - float(curve.iloc[0]) + initial / max(len(curves), 1)
-        base = rel if base is None else base.add(rel - initial / max(len(curves), 1), fill_value=0.0)
-    if base is None:
-        return None
-    # Renormalize start
-    if len(base):
-        base = base - float(base.iloc[0]) + initial
-    return base.sort_index()
+def _merge_equity(
+    curves: list[pd.Series],
+    initial: float,
+    *,
+    mode: CapitalAllocationMode,
+) -> pd.Series | None:
+    if mode is CapitalAllocationMode.PER_SYMBOL_FULL:
+        return merge_per_symbol_full_equity(curves, initial)
+    return merge_equal_weight_equity(curves, initial)
 
 
 class EMAEvaluationEngine:
@@ -128,13 +133,29 @@ class EMAEvaluationEngine:
     def __init__(self, config: EvaluationConfig | None = None) -> None:
         self.config = config or EvaluationConfig()
 
+    def _sleeve_capital(self, n_symbols: int) -> float:
+        n = max(int(n_symbols), 1)
+        if (
+            self.config.capital_mode is CapitalAllocationMode.EQUAL_WEIGHT
+            and n > 1
+        ):
+            return float(self.config.initial_capital) / float(n)
+        return float(self.config.initial_capital)
+
     def evaluate_symbol(
         self,
         symbol: str,
         features: pd.DataFrame,
+        *,
+        sleeve_capital: float | None = None,
     ) -> dict[str, Any]:
+        capital = (
+            float(sleeve_capital)
+            if sleeve_capital is not None
+            else float(self.config.initial_capital)
+        )
         settings = BacktestSettings(
-            initial_capital=self.config.initial_capital,
+            initial_capital=capital,
             percent=self.config.percent,
             slippage_bps=self.config.slippage_bps,
             brokerage_rate=self.config.brokerage_rate,
@@ -181,13 +202,27 @@ class EMAEvaluationEngine:
         period_start = None
         period_end = None
         total = len(symbol_frames)
+        n_symbols = max(total, 1)
+        sleeve_capital = self._sleeve_capital(n_symbols)
+        resolution = resolution_for_stride(self.config.stride)
+        ppy = periods_per_year_for_stride(self.config.stride)
+        print(
+            f"Evaluation mode: {resolution.value} | capital_mode="
+            f"{self.config.capital_mode.value} | sleeve_capital={sleeve_capital:.2f} "
+            f"| stride={self.config.stride} | periods_per_year={ppy:.4f}",
+            flush=True,
+        )
         for index, (symbol, frame) in enumerate(symbol_frames.items(), start=1):
             print(
                 f"[{index}/{total}] {symbol} "
                 f"({len(frame)} bars, stride={self.config.stride}) ...",
                 flush=True,
             )
-            result = self.evaluate_symbol(symbol, frame)
+            result = self.evaluate_symbol(
+                symbol,
+                frame,
+                sleeve_capital=sleeve_capital,
+            )
             raw_bt = result["raw"]
             pro_bt = result["professional"]
             print(
@@ -215,10 +250,17 @@ class EMAEvaluationEngine:
                 period_end = end if period_end is None else max(period_end, end)
 
         agg_raw.signal_counts = raw_counts
-        n_symbols = len(symbol_frames)
         capital = self.config.initial_capital
-        raw_equity = _merge_equity(raw_curves, capital)
-        pro_equity = _merge_equity(pro_curves, capital)
+        raw_equity = _merge_equity(
+            raw_curves,
+            capital,
+            mode=self.config.capital_mode,
+        )
+        pro_equity = _merge_equity(
+            pro_curves,
+            capital,
+            mode=self.config.capital_mode,
+        )
 
         raw_perf = compute_performance(
             mode="raw",
@@ -226,6 +268,7 @@ class EMAEvaluationEngine:
             equity_curve=raw_equity,
             initial_capital=capital,
             symbols_evaluated=n_symbols,
+            periods_per_year=ppy,
         )
         pro_perf = compute_performance(
             mode="professional",
@@ -233,6 +276,7 @@ class EMAEvaluationEngine:
             equity_curve=pro_equity,
             initial_capital=capital,
             symbols_evaluated=n_symbols,
+            periods_per_year=ppy,
         )
         funnel = build_signal_funnel(raw=agg_raw, professional=agg_pro)
         filters = build_filter_effectiveness(funnel, raw_perf=raw_perf, pro_perf=pro_perf)
@@ -241,11 +285,24 @@ class EMAEvaluationEngine:
             [float(t["net_profit"]) for t in raw_trades],
             [float(t["net_profit"]) for t in pro_trades],
         )
+        validity = validate_evaluation_metrics(
+            raw_trades=raw_perf.total_trades,
+            professional_trades=pro_perf.total_trades,
+            raw_max_dd=raw_perf.max_drawdown,
+            pro_max_dd=pro_perf.max_drawdown,
+            raw_sharpe=raw_perf.sharpe_ratio,
+            pro_sharpe=pro_perf.sharpe_ratio,
+            raw_final_equity=raw_perf.final_equity,
+            pro_final_equity=pro_perf.final_equity,
+            stride=self.config.stride,
+        )
         overall, recommended, summary = overall_recommendation(
             comparisons,
             stats,
             raw=raw_perf,
             professional=pro_perf,
+            validity_ok=validity.ok,
+            validity_reasons=validity.reasons,
         )
 
         report = EvaluationReport(
@@ -263,9 +320,16 @@ class EMAEvaluationEngine:
             executive_summary=summary,
             metadata={
                 "initial_capital": capital,
+                "sleeve_capital": sleeve_capital,
+                "capital_mode": self.config.capital_mode.value,
+                "evaluation_resolution": resolution.value,
+                "stride": self.config.stride,
+                "periods_per_year": ppy,
                 "slippage_bps": self.config.slippage_bps,
                 "brokerage_rate": self.config.brokerage_rate,
                 "percent": self.config.percent,
+                "cost_model": self.config.cost_model,
+                "validity": validity.as_dict(),
             },
         )
         # stash trades/curves for export helpers
