@@ -26,6 +26,7 @@ from app.backtesting.evaluation.canonical import (
     compare_ema_modes_canonical,
     load_canonical_features,
 )
+from app.backtesting.evaluation.funnel_semantics import format_semantic_funnel
 from app.backtesting.evaluation.runner import synthetic_features
 from app.core.config import get_settings
 
@@ -88,39 +89,23 @@ def main() -> int:
         print(
             f"Resolution: {result.evaluation_resolution} | stride={result.stride}",
         )
-        print("\n[TECHNICAL CROSSOVERS]")
-        print(
-            f"  cross_above={diag.cross_above_count} "
-            f"cross_below={diag.cross_below_count}",
-        )
-        print("\n[RAW STRATEGY SIGNALS]")
-        print(
-            f"  BUY={diag.buy_count} SELL={diag.sell_count} "
-            f"HOLD={diag.hold_count} EXIT={diag.exit_count}",
-        )
-        print("\n[RAW EXECUTED TRADES]")
-        print(
-            f"  trade_count={raw.trade_count} "
-            f"(diagnostic reconstructed={diag.trade_count})",
-        )
-        print(
-            f"  backtest signals: BUY={raw.buy_signals} SELL={raw.sell_signals} "
-            f"HOLD={raw.hold_signals} EXIT={raw.exit_signals}",
-        )
-        print("\n[PROFESSIONAL STRATEGY SIGNALS / TRADES]")
-        print(
-            f"  BUY={pro.buy_signals} SELL={pro.sell_signals} "
-            f"HOLD={pro.hold_signals} EXIT={pro.exit_signals}",
-        )
-        print(f"  trade_count={pro.trade_count}")
-        if pro.funnel:
+        if result.semantic_funnel is not None:
+            print()
+            print(format_semantic_funnel(result.semantic_funnel))
+        else:
+            print("\n[TECHNICAL CROSSOVERS]")
             print(
-                "  funnel: "
-                f"raw_buy={pro.funnel.get('raw_buy', 0)} "
-                f"final_buy={pro.funnel.get('final_buy', 0)} "
-                f"rejected_ema200={pro.funnel.get('rejected_ema200', 0)} "
-                f"rejected_adx={pro.funnel.get('rejected_adx', 0)} "
-                f"rejected_volume={pro.funnel.get('rejected_volume', 0)}",
+                f"  cross_above={diag.cross_above_count} "
+                f"cross_below={diag.cross_below_count}",
+            )
+            print("\n[RAW STRATEGY SIGNALS]")
+            print(
+                f"  BUY={diag.buy_count} SELL={diag.sell_count} "
+                f"HOLD={diag.hold_count} EXIT={diag.exit_count}",
+            )
+            print("\n[COMPLETED TRADES]")
+            print(
+                f"  raw={raw.trade_count} professional={pro.trade_count}",
             )
 
         path = out_dir / f"{symbol}_ema_canonical_comparison.json"
@@ -136,12 +121,26 @@ def main() -> int:
                 "bars_in_frame": result.bars_in_frame,
                 "cross_above": diag.cross_above_count,
                 "cross_below": diag.cross_below_count,
-                "raw_buy": diag.buy_count,
-                "raw_exit": diag.exit_count,
-                "raw_trades": raw.trade_count,
-                "professional_buy": pro.buy_signals,
-                "professional_sell": pro.sell_signals,
-                "professional_trades": pro.trade_count,
+                "raw_strategy_buy_signals": diag.buy_count,
+                "raw_strategy_exit_signals": diag.exit_count,
+                "raw_completed_trades": raw.trade_count,
+                "professional_buy_candidates": (
+                    result.semantic_funnel.professional_buy_candidates
+                    if result.semantic_funnel is not None
+                    else None
+                ),
+                "professional_buy_signals": pro.buy_signals,
+                "professional_completed_trades": pro.trade_count,
+                "professional_buy_candidate_reduction_pct": (
+                    result.semantic_funnel.professional_buy_candidate_reduction_pct
+                    if result.semantic_funnel is not None
+                    else None
+                ),
+                "funnel_mode": (
+                    result.semantic_funnel.funnel_mode
+                    if result.semantic_funnel is not None
+                    else None
+                ),
             },
         )
 

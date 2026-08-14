@@ -19,6 +19,7 @@ from app.backtesting.evaluation.export import (
 )
 from app.backtesting.evaluation.integrity import (
     CapitalAllocationMode,
+    diagnose_raw_signals,
     merge_equal_weight_equity,
     merge_per_symbol_full_equity,
     periods_per_year_for_stride,
@@ -251,6 +252,22 @@ class EMAEvaluationEngine:
                 period_end = end if period_end is None else max(period_end, end)
 
         agg_raw.signal_counts = raw_counts
+        diagnostic = None
+        if n_symbols == 1:
+            only_symbol, only_frame = next(iter(symbol_frames.items()))
+            diagnostic = diagnose_raw_signals(
+                EMATrendStrategy(
+                    EMATrendConfig(
+                        mode="raw",
+                        symbol=only_symbol,
+                        min_history_bars=self.config.min_history_bars,
+                    ),
+                ),
+                only_frame,
+                symbol=only_symbol,
+                min_history_bars=self.config.min_history_bars,
+                stride=self.config.stride,
+            )
         capital = self.config.initial_capital
         raw_equity = _merge_equity(
             raw_curves,
@@ -279,7 +296,13 @@ class EMAEvaluationEngine:
             symbols_evaluated=n_symbols,
             periods_per_year=ppy,
         )
-        funnel = build_signal_funnel(raw=agg_raw, professional=agg_pro)
+        funnel = build_signal_funnel(
+            raw=agg_raw,
+            professional=agg_pro,
+            diagnostic=diagnostic,
+            raw_trade_count=len(raw_trades),
+            professional_trade_count=len(pro_trades),
+        )
         filters = build_filter_effectiveness(funnel, raw_perf=raw_perf, pro_perf=pro_perf)
         comparisons = compare_metrics(raw_perf, pro_perf)
         stats = paired_trade_delta(
@@ -384,16 +407,16 @@ class EMAEvaluationEngine:
                 raw_pnls=[float(t["net_profit"]) for t in artifacts.get("raw_trades", [])],
                 pro_pnls=[float(t["net_profit"]) for t in artifacts.get("pro_trades", [])],
                 funnel_labels=[
-                    "Raw BUY",
-                    "Raw SELL",
-                    "Final BUY",
-                    "Final SELL",
+                    "Pro BUY candidates",
+                    "Final BUY signals",
+                    "Raw completed trades",
+                    "Pro completed trades",
                 ],
                 funnel_values=[
-                    funnel.raw_buy,
-                    funnel.raw_sell,
-                    funnel.professional_buy,
-                    funnel.professional_sell,
+                    funnel.professional_buy_candidates,
+                    funnel.professional_buy_signals,
+                    funnel.raw_completed_trades,
+                    funnel.professional_completed_trades,
                 ],
                 filter_labels=["EMA200", "ADX", "Volume", "ATR", "Other"],
                 filter_values=[

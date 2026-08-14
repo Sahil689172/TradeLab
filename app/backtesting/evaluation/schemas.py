@@ -60,8 +60,21 @@ class PerformanceMetrics(BaseModel):
 
 
 class SignalFunnelMetrics(BaseModel):
+    """Evaluation funnel metrics.
+
+    Legacy names (kept for compatibility):
+        raw_buy / raw_sell — professional BUY/SELL *candidates* (EMA9/21
+            crossovers entering gates). NOT raw-strategy BUY/EXIT counts.
+        professional_buy / professional_sell — final professional signals.
+        signal_reduction_pct — BUY candidate reduction
+            (candidates - final_buy) / candidates * 100.
+
+    Prefer the explicit A4Y.1.7.3 names in new reports.
+    """
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    # Legacy aliases
     raw_buy: int = 0
     raw_sell: int = 0
     professional_buy: int = 0
@@ -74,6 +87,30 @@ class SignalFunnelMetrics(BaseModel):
     acceptance_rate: float = 0.0
     rejection_rate: float = 0.0
     signal_reduction_pct: float = 0.0
+
+    # A4Y.1.7.3 explicit layers
+    funnel_mode: str = "sequential"
+    technical_cross_above: int = 0
+    technical_cross_below: int = 0
+    raw_strategy_buy_signals: int = 0
+    raw_strategy_exit_signals: int = 0
+    professional_buy_candidates: int = 0
+    professional_sell_candidates: int = 0
+    ema200_rejections: int = 0
+    adx_rejections: int = 0
+    volume_rejections: int = 0
+    atr_rejections: int = 0
+    other_rejections: int = 0
+    remaining_after_ema200: int = 0
+    remaining_after_adx: int = 0
+    remaining_after_volume: int = 0
+    remaining_after_atr: int = 0
+    professional_buy_signals: int = 0
+    professional_exit_signals: int = 0
+    raw_completed_trades: int = 0
+    professional_completed_trades: int = 0
+    professional_buy_candidate_reduction_pct: float = 0.0
+    sequential_funnel_reconciles: bool = True
 
 
 class FilterEffectivenessRow(BaseModel):

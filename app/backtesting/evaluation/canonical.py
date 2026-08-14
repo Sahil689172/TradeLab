@@ -17,11 +17,15 @@ from app.backtesting.evaluation.backtester import (
     BacktestSettings,
     run_long_only_backtest,
 )
+from app.backtesting.evaluation.funnel_semantics import (
+    build_signal_funnel,
+)
 from app.backtesting.evaluation.integrity import (
     RawSignalDiagnostic,
     diagnose_raw_signals,
     resolution_for_stride,
 )
+from app.backtesting.evaluation.schemas import SignalFunnelMetrics
 from app.feature_engine.strategy_frame import (
     ensure_strategy_indicators,
     features_include_ohlcv,
@@ -70,8 +74,60 @@ class CanonicalEMAComparison:
     raw_diagnostic: RawSignalDiagnostic
     raw: CanonicalModeStats
     professional: CanonicalModeStats
+    semantic_funnel: SignalFunnelMetrics | None = None
 
     def as_dict(self) -> dict[str, Any]:
+        funnel = self.semantic_funnel
+        layers = {
+            "technical_crossovers": {
+                "cross_above": self.raw_diagnostic.cross_above_count,
+                "cross_below": self.raw_diagnostic.cross_below_count,
+            },
+            "raw_strategy_signals": {
+                "buy": self.raw_diagnostic.buy_count,
+                "sell": self.raw_diagnostic.sell_count,
+                "exit": self.raw_diagnostic.exit_count,
+                "hold": self.raw_diagnostic.hold_count,
+            },
+            "professional_buy_candidates": (
+                funnel.professional_buy_candidates if funnel is not None else None
+            ),
+            "professional_filter_rejections_sequential": (
+                {
+                    "funnel_mode": funnel.funnel_mode,
+                    "ema200": funnel.ema200_rejections,
+                    "remaining_after_ema200": funnel.remaining_after_ema200,
+                    "adx": funnel.adx_rejections,
+                    "remaining_after_adx": funnel.remaining_after_adx,
+                    "volume": funnel.volume_rejections,
+                    "remaining_after_volume": funnel.remaining_after_volume,
+                    "atr": funnel.atr_rejections,
+                    "other": funnel.other_rejections,
+                    "reconciles": funnel.sequential_funnel_reconciles,
+                }
+                if funnel is not None
+                else None
+            ),
+            "professional_strategy_signals": {
+                "buy": self.professional.buy_signals,
+                "sell": self.professional.sell_signals,
+                "exit": self.professional.exit_signals,
+                "hold": self.professional.hold_signals,
+            },
+            "completed_trades": {
+                "raw": self.raw.trade_count,
+                "professional": self.professional.trade_count,
+                "raw_diagnostic_reconstructed": self.raw_diagnostic.trade_count,
+            },
+            "executed_trades": {
+                "raw": self.raw.trade_count,
+                "professional": self.professional.trade_count,
+                "raw_diagnostic_reconstructed": self.raw_diagnostic.trade_count,
+            },
+            "professional_buy_candidate_reduction_pct": (
+                funnel.professional_buy_candidate_reduction_pct if funnel is not None else None
+            ),
+        }
         return {
             "symbol": self.symbol,
             "bars_in_frame": self.bars_in_frame,
@@ -81,29 +137,8 @@ class CanonicalEMAComparison:
             "raw_diagnostic": self.raw_diagnostic.as_dict(),
             "raw": self.raw.as_dict(),
             "professional": self.professional.as_dict(),
-            "metric_layers": {
-                "technical_crossovers": {
-                    "cross_above": self.raw_diagnostic.cross_above_count,
-                    "cross_below": self.raw_diagnostic.cross_below_count,
-                },
-                "raw_strategy_signals": {
-                    "buy": self.raw_diagnostic.buy_count,
-                    "sell": self.raw_diagnostic.sell_count,
-                    "exit": self.raw_diagnostic.exit_count,
-                    "hold": self.raw_diagnostic.hold_count,
-                },
-                "professional_strategy_signals": {
-                    "buy": self.professional.buy_signals,
-                    "sell": self.professional.sell_signals,
-                    "exit": self.professional.exit_signals,
-                    "hold": self.professional.hold_signals,
-                },
-                "executed_trades": {
-                    "raw": self.raw.trade_count,
-                    "professional": self.professional.trade_count,
-                    "raw_diagnostic_reconstructed": self.raw_diagnostic.trade_count,
-                },
-            },
+            "semantic_funnel": funnel.model_dump() if funnel is not None else None,
+            "metric_layers": layers,
         }
 
 
@@ -192,6 +227,15 @@ def compare_ema_modes_canonical(
         symbol=resolved,
     )
 
+    raw_stats = _stats_from_backtest("raw", raw_bt)
+    pro_stats = _stats_from_backtest("professional", pro_bt)
+    semantic = build_signal_funnel(
+        raw=raw_bt,
+        professional=pro_bt,
+        diagnostic=diagnostic,
+        raw_trade_count=len(raw_bt.trades),
+        professional_trade_count=len(pro_bt.trades),
+    )
     return CanonicalEMAComparison(
         symbol=resolved,
         bars_in_frame=len(frame),
@@ -199,6 +243,7 @@ def compare_ema_modes_canonical(
         evaluation_resolution=resolution_for_stride(settings.stride).value,
         min_history_bars=min_history_bars,
         raw_diagnostic=diagnostic,
-        raw=_stats_from_backtest("raw", raw_bt),
-        professional=_stats_from_backtest("professional", pro_bt),
+        raw=raw_stats,
+        professional=pro_stats,
+        semantic_funnel=semantic,
     )

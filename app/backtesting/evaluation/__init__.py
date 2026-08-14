@@ -29,6 +29,10 @@ from app.backtesting.evaluation.integrity import (
     resolution_for_stride,
     validate_evaluation_metrics,
 )
+from app.backtesting.evaluation.funnel_semantics import (
+    buy_candidate_reduction_pct,
+    build_signal_funnel,
+)
 from app.feature_engine.strategy_frame import ensure_strategy_indicators
 from app.backtesting.evaluation.reports import format_console_report, format_markdown_report
 from app.backtesting.evaluation.runner import (
@@ -70,6 +74,8 @@ __all__ = [
     "SignalFunnelMetrics",
     "StatisticalSummary",
     "Verdict",
+    "build_signal_funnel",
+    "buy_candidate_reduction_pct",
     "cagr",
     "compare_ema_modes_canonical",
     "compare_metrics",

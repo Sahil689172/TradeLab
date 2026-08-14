@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.backtesting.evaluation.funnel_semantics import format_semantic_funnel
 from app.backtesting.evaluation.schemas import EvaluationReport
 
 
@@ -61,20 +62,9 @@ def format_console_report(report: EvaluationReport) -> str:
         "",
         "-" * 48,
         "",
-        "Signal Reduction",
-        f"{funnel.signal_reduction_pct:.1f}%",
+        format_semantic_funnel(funnel),
         "",
-        "EMA200 Filter",
-        f"Rejected {funnel.rejected_ema200}",
-        "",
-        "ADX Filter",
-        f"Rejected {funnel.rejected_adx}",
-        "",
-        "Volume Filter",
-        f"Rejected {funnel.rejected_volume}",
-        "",
-        "ATR Filter",
-        f"Rejected {funnel.rejected_atr}",
+        "-" * 48,
         "",
         "Overall Improvement",
         "PASS" if report.overall_improvement else "FAIL",
@@ -151,19 +141,35 @@ def format_markdown_report(report: EvaluationReport) -> str:
             f"- Net Profit: {pro.net_profit:.2f}",
             f"- Profit Factor: {pro.profit_factor:.3f}",
             "",
-            "## Signal Funnel",
+            "## Signal Funnel (A4Y.1.7.3 layers)",
             "",
-            f"- Raw BUY/SELL: {report.signal_funnel.raw_buy} / {report.signal_funnel.raw_sell}",
-            f"- Professional BUY/SELL: {report.signal_funnel.professional_buy} / {report.signal_funnel.professional_sell}",
-            f"- Rejected EMA200/ADX/Volume/ATR/Other: "
-            f"{report.signal_funnel.rejected_ema200}/"
-            f"{report.signal_funnel.rejected_adx}/"
-            f"{report.signal_funnel.rejected_volume}/"
-            f"{report.signal_funnel.rejected_atr}/"
-            f"{report.signal_funnel.rejected_other}",
-            f"- Acceptance Rate: {report.signal_funnel.acceptance_rate:.2%}",
-            f"- Rejection Rate: {report.signal_funnel.rejection_rate:.2%}",
-            f"- Signal Reduction: {report.signal_funnel.signal_reduction_pct:.1f}%",
+            f"- funnel_mode: `{report.signal_funnel.funnel_mode}` "
+            f"(sequential first-fail; sequential_reconciles="
+            f"{report.signal_funnel.sequential_funnel_reconciles})",
+            f"- Technical crossovers: above={report.signal_funnel.technical_cross_above} "
+            f"below={report.signal_funnel.technical_cross_below}",
+            f"- Raw strategy signals: BUY={report.signal_funnel.raw_strategy_buy_signals} "
+            f"EXIT={report.signal_funnel.raw_strategy_exit_signals}",
+            f"- Professional BUY candidates (EMA9/21 crosses, not raw BUY): "
+            f"{report.signal_funnel.professional_buy_candidates}",
+            f"- Sequential BUY remaining: "
+            f"EMA200→{report.signal_funnel.remaining_after_ema200} "
+            f"ADX→{report.signal_funnel.remaining_after_adx} "
+            f"Volume→{report.signal_funnel.remaining_after_volume} "
+            f"ATR→{report.signal_funnel.remaining_after_atr}",
+            f"- Rejections EMA200/ADX/Volume/ATR/Other: "
+            f"{report.signal_funnel.ema200_rejections}/"
+            f"{report.signal_funnel.adx_rejections}/"
+            f"{report.signal_funnel.volume_rejections}/"
+            f"{report.signal_funnel.atr_rejections}/"
+            f"{report.signal_funnel.other_rejections}",
+            f"- Professional BUY signals (final): {report.signal_funnel.professional_buy_signals}",
+            f"- Professional EXIT signals: {report.signal_funnel.professional_exit_signals}",
+            f"- Completed trades: raw={report.signal_funnel.raw_completed_trades} "
+            f"professional={report.signal_funnel.professional_completed_trades}",
+            f"- BUY candidate reduction: "
+            f"{report.signal_funnel.professional_buy_candidate_reduction_pct:.1f}% "
+            f"(candidates - final_buy) / candidates",
             "",
             "## Filter Effectiveness",
             "",

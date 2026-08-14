@@ -123,17 +123,17 @@ def format_buy_sell_funnels(funnel: SignalFunnel) -> str:
     never blocked by EMA200 / ADX / Volume / Duplicate suppression.
     """
     lines = [
-        "BUY Funnel (entry filters):",
-        f"  Raw BUY:            {funnel.raw_buy}",
+        "BUY Funnel (professional candidates, sequential first-fail):",
+        f"  Professional BUY candidates: {funnel.raw_buy}",
         f"  - Rejected EMA200:  {funnel.rejected_ema200}",
         f"  - Rejected ADX:     {funnel.rejected_adx}",
         f"  - Rejected Volume:  {funnel.rejected_volume}",
         f"  - Rejected ATR:     {funnel.rejected_atr}",
         f"  - Rejected Other:   {funnel.rejected_other}",
-        f"  Final BUY:          {funnel.final_buy}",
+        f"  Final BUY signals:  {funnel.final_buy}",
         f"  Acceptance rate:    {funnel.buy_acceptance_rate:.1%}",
         "SELL Funnel (exits — never blocked by entry filters):",
-        f"  Raw SELL:           {funnel.raw_sell}",
+        f"  Professional SELL candidates: {funnel.raw_sell}",
         f"  Final SELL (exits): {funnel.final_sell}",
         f"  Exit rate:          {funnel.sell_exit_rate:.1%}",
     ]

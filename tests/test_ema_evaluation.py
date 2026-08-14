@@ -93,17 +93,26 @@ def test_signal_and_filter_funnel() -> None:
             "rejected_adx": 2,
             "rejected_volume": 1,
             "rejected_atr": 0,
-            "rejected_other": 2,
+            "rejected_other": 0,
             "final_buy": 4,
             "final_sell": 2,
         },
     )
     funnel = build_signal_funnel(raw=raw, professional=pro)
-    assert funnel.raw_buy == 10
+    assert funnel.raw_buy == 10  # legacy alias = professional BUY candidates
+    assert funnel.professional_buy_candidates == 10
     assert funnel.rejected_ema200 == 3
     assert funnel.professional_buy == 4
-    assert funnel.acceptance_rate == pytest.approx(6 / 14)
-    assert funnel.signal_reduction_pct == pytest.approx((14 - 6) / 14 * 100)
+    assert funnel.professional_buy_signals == 4
+    assert funnel.funnel_mode == "sequential"
+    assert funnel.acceptance_rate == pytest.approx(4 / 10)
+    assert funnel.signal_reduction_pct == pytest.approx((10 - 4) / 10 * 100)
+    assert funnel.professional_buy_candidate_reduction_pct == pytest.approx(60.0)
+    assert funnel.remaining_after_ema200 == 7
+    assert funnel.remaining_after_adx == 5
+    assert funnel.remaining_after_volume == 4
+    assert funnel.remaining_after_atr == 4
+    assert funnel.sequential_funnel_reconciles is True
 
     raw_perf = compute_performance(mode="raw", trades=[{"net_profit": 10, "brokerage": 0, "slippage": 0, "holding_days": 1, "quantity": 1, "entry_price": 1}], equity_curve=None, initial_capital=1000)
     pro_perf = compute_performance(mode="professional", trades=[{"net_profit": 20, "brokerage": 0, "slippage": 0, "holding_days": 1, "quantity": 1, "entry_price": 1}], equity_curve=None, initial_capital=1000)
