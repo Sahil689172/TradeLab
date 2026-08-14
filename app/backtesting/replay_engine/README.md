@@ -37,3 +37,9 @@ Reuses unchanged:
 - `StrategyContextProvider`
 - Strategy Engine (`strategy.execute`)
 - `TradeRecommendationEngine`
+
+Each `ReplayStepResult` now also carries optional `current_open` / `current_high`
+/ `current_low` so A5.3 can detect stops/targets without look-ahead. Close-only
+construction remains valid (high/low default to close).
+
+Position tracking after fills: `app/backtesting/position_manager/`.

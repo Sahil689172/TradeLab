@@ -10,6 +10,10 @@ from app.backtesting.order_execution import (
     SimulatedBroker,
     TradeLogEntry,
 )
+from app.backtesting.position_manager import (
+    PositionManager,
+    ReplayPositionRunner,
+)
 from app.backtesting.replay_engine.engine import HistoricalReplayEngine
 from app.backtesting.replay_engine.events import (
     NewCandle,
@@ -41,6 +45,7 @@ __all__ = [
     "HistoricalReplayEngine",
     "NewCandle",
     "OrderExecutionEngine",
+    "PositionManager",
     "RecommendationGenerated",
     "ReplayCompleted",
     "ReplayConfig",
@@ -49,6 +54,7 @@ __all__ = [
     "ReplayEvent",
     "ReplayEventType",
     "ReplayLookAheadError",
+    "ReplayPositionRunner",
     "ReplayResult",
     "ReplayScheduler",
     "ReplaySession",

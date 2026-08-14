@@ -29,5 +29,10 @@ rejection diagnostics, and trade logs only.
 ## Integration
 
 ```
-Replay Engine → TradeRecommendation → OrderExecutionEngine → Trade / Reject logs
+Replay Engine → TradeRecommendation → OrderExecutionEngine → fills / rejects
+                                                    ↓
+                                          Position Manager (A5.3)
 ```
+
+Use ``ReplayPositionRunner`` when stop-loss should be detected on bar lows and
+requested back through this engine. See ``app/backtesting/position_manager/``.

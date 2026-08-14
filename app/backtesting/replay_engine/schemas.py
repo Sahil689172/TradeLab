@@ -76,6 +76,9 @@ class ReplayStepResult(BaseModel):
     symbol: str
     strategy_name: str
     current_close: float = Field(..., gt=0.0)
+    current_open: float | None = Field(default=None, gt=0.0)
+    current_high: float | None = Field(default=None, gt=0.0)
+    current_low: float | None = Field(default=None, gt=0.0)
     replay_index: int = Field(..., ge=0)
     signal: SignalType
     confidence: float = Field(..., ge=0.0, le=100.0)

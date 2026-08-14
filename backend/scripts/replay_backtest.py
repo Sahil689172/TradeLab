@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Historical candle replay → Strategy Engine → optional Order Execution.
+"""Historical candle replay → Strategy Engine → optional Order Execution / Positions.
 
-A5.1 Replay + A5.2 / A5.2.1 simulated market fills. No portfolio analytics.
+A5.1 Replay + A5.2 fills + optional A5.3 Position Manager.
 
 Run from the project root:
 
     python backend/scripts/replay_backtest.py --symbol RELIANCE --speed fast
     python backend/scripts/replay_backtest.py --symbol RELIANCE ^
-        --start-date 2022-01-01 --end-date 2022-12-31 --speed fast --execute-orders
+        --execute-orders --track-positions --end-of-backtest FORCE_CLOSE
 """
 
 from __future__ import annotations
@@ -26,6 +26,12 @@ from app.backtesting.order_execution import (
     ExecutionConfig,
     OrderExecutionEngine,
     PositionSizingMode,
+)
+from app.backtesting.position_manager import (
+    EndOfBacktestPolicy,
+    PositionManager,
+    PositionManagerConfig,
+    ReplayPositionRunner,
 )
 from app.backtesting.replay_engine import (
     HistoricalReplayEngine,
@@ -172,6 +178,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Print every order decision (fills and rejects)",
     )
+    parser.add_argument(
+        "--track-positions",
+        action="store_true",
+        help="Run A5.3 Position Manager (implies --execute-orders)",
+    )
+    parser.add_argument(
+        "--end-of-backtest",
+        choices=["FORCE_CLOSE", "MARK_TO_MARKET", "LEAVE_OPEN"],
+        default="FORCE_CLOSE",
+        help="A5.3 policy for open lots at replay end (with --track-positions)",
+    )
+    parser.add_argument(
+        "--position-log",
+        default=None,
+        help="Position history JSON path (default: logs/position_log.json)",
+    )
     return parser.parse_args(argv)
 
 
@@ -227,6 +249,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.rejected_orders
         else Path(settings.log_directory) / "rejected_orders.json"
     )
+    position_log_path = (
+        Path(args.position_log)
+        if args.position_log
+        else Path(settings.log_directory) / "position_log.json"
+    )
 
     config = ReplayConfig(
         symbols=args.symbols,
@@ -243,8 +270,10 @@ def main(argv: list[str] | None = None) -> int:
 
     print("=" * 72)
     print("TradeLab — Historical Replay Engine (A5.1)")
-    if args.execute_orders:
+    if args.execute_orders or args.track_positions:
         print("+ Order Execution Engine (A5.2.1)")
+    if args.track_positions:
+        print("+ Position Manager (A5.3)")
     print("=" * 72)
     print(f"Storage:    {storage_dir}")
     print(f"Symbols:    {', '.join(config.symbols)}")
@@ -252,9 +281,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Start:      {config.start_date or 'beginning'}")
     print(f"End:        {config.end_date or 'latest'}")
     print(f"Speed:      {config.speed.value}")
-    if args.execute_orders:
+    if args.execute_orders or args.track_positions:
         print(f"Capital:    ₹{float(args.initial_capital):,.2f}")
         print(f"Sizing:     {args.position_sizing}")
+    if args.track_positions:
+        print(f"EOB policy: {args.end_of_backtest}")
     print()
 
     engine = HistoricalReplayEngine(config)
@@ -288,13 +319,24 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(f"Replay JSON: {output_path}")
 
-    if args.execute_orders:
+    if args.execute_orders or args.track_positions:
         exec_config = _build_execution_config(args)
         execution = OrderExecutionEngine(
             exec_config,
             debug=bool(args.debug_orders),
         )
-        exec_result = execution.process_replay_result(result)
+        pos_result = None
+        if args.track_positions:
+            pm = PositionManager(
+                PositionManagerConfig(
+                    end_of_backtest=EndOfBacktestPolicy(args.end_of_backtest),
+                    debug=bool(args.debug_orders),
+                ),
+            )
+            runner = ReplayPositionRunner(execution, pm)
+            exec_result, pos_result = runner.process_replay(result)
+        else:
+            exec_result = execution.process_replay_result(result)
         summary = exec_result.summary
 
         print()
@@ -365,6 +407,37 @@ def main(argv: list[str] | None = None) -> int:
         print()
         print(f"Trade log JSON:      {trade_log_path}")
         print(f"Rejected orders JSON: {rejected_path}")
+
+        if pos_result is not None:
+            print()
+            print("--- Position Manager (A5.3) ---")
+            print(f"EOB policy:        {pos_result.end_of_backtest_policy.value}")
+            print(f"Open positions:    {len(pos_result.open_positions)}")
+            print(f"Closed positions:  {len(pos_result.closed_positions)}")
+            print(f"Lifecycle events:  {len(pos_result.events)}")
+            for pos in pos_result.open_positions:
+                print(
+                    f"  OPEN {pos.symbol} qty={pos.quantity:g} "
+                    f"entry={pos.entry_price:.4f} mark={pos.current_price:.4f} "
+                    f"uPnL={pos.unrealized_pnl:,.2f} t1={pos.target_1_hit} "
+                    f"t2={pos.target_2_hit}",
+                )
+            for pos in pos_result.closed_positions[-10:]:
+                print(
+                    f"  CLOSED {pos.symbol} qty={pos.quantity:g} "
+                    f"entry={pos.entry_price:.4f} exit={pos.exit_price:.4f} "
+                    f"rPnL={pos.realized_pnl:,.2f} "
+                    f"reason={pos.exit_reason.value if pos.exit_reason else 'n/a'} "
+                    f"hold={pos.holding_period}",
+                )
+            position_log_path.parent.mkdir(parents=True, exist_ok=True)
+            position_log_path.write_text(
+                json.dumps(pos_result.model_dump(mode="json"), indent=2, default=str)
+                + "\n",
+                encoding="utf-8",
+            )
+            print()
+            print(f"Position log JSON:   {position_log_path}")
 
     return 1 if result.errors and not result.steps else 0
 
