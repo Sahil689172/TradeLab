@@ -35,6 +35,11 @@ backend/data/*.db
 !backend/data/ohlcv/.gitkeep
 !backend/data/logs/
 !backend/data/logs/.gitkeep
+!backend/data/monte_carlo/
+!backend/data/monte_carlo/.gitkeep
+backend/data/monte_carlo/*.json
+backend/data/monte_carlo/*.md
+backend/data/monte_carlo/*.csv
 
 # Pytest / coverage
 .pytest_cache/

@@ -4,6 +4,10 @@ Package layout lives under ``app/backtesting/`` (TradeLab convention). There is 
 ``backend/app/`` package in this repository.
 """
 
+from app.backtesting.monte_carlo import (
+    MonteCarloEngine,
+    MonteCarloConfig,
+)
 from app.backtesting.order_execution import (
     ExecutionConfig,
     OrderExecutionEngine,
@@ -43,6 +47,8 @@ from app.backtesting.replay_engine.state import ReplayStatus
 __all__ = [
     "ExecutionConfig",
     "HistoricalReplayEngine",
+    "MonteCarloConfig",
+    "MonteCarloEngine",
     "NewCandle",
     "OrderExecutionEngine",
     "PositionManager",
