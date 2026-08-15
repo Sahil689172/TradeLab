@@ -15,7 +15,7 @@ from app.backtesting.order_execution import (
     RejectionReason,
     SimulatedBroker,
 )
-from app.backtesting.order_execution.orders import Fill
+from app.backtesting.order_execution.orders import Fill, OrderStatus
 from app.backtesting.position_manager import (
     EndOfBacktestPolicy,
     Position,
@@ -808,3 +808,159 @@ def test_gross_realized_matches_spec_formula() -> None:
     assert closed.position.gross_realized_pnl == pytest.approx((1250.0 - 1200.0) * 10.0)
     assert closed.position.realized_pnl == pytest.approx(500.0)
     assert closed.position.unrealized_pnl == pytest.approx(0.0)
+
+
+def test_full_lifecycle_buy_filled_open_mtm_exit_filled_closed() -> None:
+    """Deterministic A5.3 guarantee: BUY FILLED → OPEN → MTM → EXIT FILLED → CLOSED.
+
+    Does not call the Strategy Engine. Recommendations are a fixed fixture so the
+    path cannot depend on RELIANCE parquet emitting a BUY.
+    """
+    engine = OrderExecutionEngine(broker=SimulatedBroker(_cfg(capital=10_000.0, quantity=10.0)))
+    pm = PositionManager(
+        PositionManagerConfig(end_of_backtest=EndOfBacktestPolicy.LEAVE_OPEN),
+    )
+    runner = ReplayPositionRunner(engine, pm)
+
+    buy_rec = _rec(
+        signal=SignalType.BUY,
+        price=100.0,
+        ts=TS0,
+        stop_loss=90.0,
+        target_1=110.0,
+        target_2=120.0,
+    )
+    buy_attempts = runner.process_step(_step(buy_rec, close=100.0, replay_index=0))
+    buy_attempt = next(a for a in buy_attempts if a.accepted)
+    assert buy_attempt.order is not None
+    assert buy_attempt.order.side is OrderSide.BUY
+    assert buy_attempt.order.status is OrderStatus.FILLED
+    assert buy_attempt.fill is not None
+    assert buy_attempt.fill.side is OrderSide.BUY
+    assert buy_attempt.fill.quantity == pytest.approx(10.0)
+    assert buy_attempt.fill.execution_price == pytest.approx(100.0)
+    opened = pm.get_position("RELIANCE")
+    assert opened is not None
+    assert opened.status is PositionStatus.OPEN
+    assert opened.quantity == pytest.approx(10.0)
+    assert opened.entry_price == pytest.approx(100.0)
+    assert any(e.event_type is PositionEventType.POSITION_OPENED for e in pm.events)
+
+    hold_rec = _rec(
+        signal=SignalType.HOLD,
+        price=103.0,
+        ts=TS1,
+        stop_loss=90.0,
+        target_1=110.0,
+        target_2=120.0,
+    )
+    runner.process_step(
+        _step(hold_rec, close=103.0, replay_index=1, high=104.0, low=102.0, open_px=102.5),
+    )
+    marked = pm.get_position("RELIANCE")
+    assert marked is not None
+    assert marked.status is PositionStatus.OPEN
+    assert marked.entry_price == pytest.approx(100.0)
+    assert marked.current_price == pytest.approx(103.0)
+    assert marked.unrealized_pnl == pytest.approx(30.0)
+    assert marked.realized_pnl == pytest.approx(0.0)
+    assert any(e.event_type is PositionEventType.POSITION_UPDATED for e in pm.events)
+
+    exit_rec = _rec(
+        signal=SignalType.EXIT,
+        price=108.0,
+        ts=TS2,
+        stop_loss=90.0,
+        target_1=110.0,
+        target_2=120.0,
+    )
+    exit_attempts = runner.process_step(_step(exit_rec, close=108.0, replay_index=2))
+    exit_attempt = next(a for a in exit_attempts if a.accepted)
+    assert exit_attempt.order is not None
+    assert exit_attempt.order.side is OrderSide.SELL
+    assert exit_attempt.order.status is OrderStatus.FILLED
+    assert exit_attempt.fill is not None
+    assert exit_attempt.fill.side is OrderSide.SELL
+
+    assert pm.get_open_positions() == []
+    closed = pm.get_closed_positions()
+    assert len(closed) == 1
+    pos = closed[0]
+    assert pos.status is PositionStatus.CLOSED
+    assert pos.quantity == pytest.approx(10.0)
+    assert pos.entry_price == pytest.approx(100.0)
+    assert pos.exit_price == pytest.approx(108.0)
+    assert pos.realized_pnl == pytest.approx(80.0)
+    assert pos.unrealized_pnl == pytest.approx(0.0)
+    assert pos.exit_reason is PositionExitReason.STRATEGY_EXIT
+    assert any(e.event_type is PositionEventType.POSITION_CLOSED for e in pm.events)
+
+    fills = engine.broker.fill_log
+    assert len(fills) == 2
+    assert fills[0].side is OrderSide.BUY
+    assert fills[1].side is OrderSide.SELL
+    assert engine.broker.cash == pytest.approx(10_080.0)
+
+    opened_count = sum(
+        1 for e in pm.events if e.event_type is PositionEventType.POSITION_OPENED
+    )
+    closed_count = sum(
+        1 for e in pm.events if e.event_type is PositionEventType.POSITION_CLOSED
+    )
+    print()
+    print("A5.3 LIFECYCLE REPORT")
+    print(f"orders attempted: {len(fills)}")
+    print(f"orders filled:     {len(fills)}")
+    print(f"positions opened:  {opened_count}")
+    print(f"positions closed:  {closed_count}")
+    print(f"entry price:       {pos.entry_price}")
+    print(f"exit price:        {pos.exit_price}")
+    print(f"quantity:          {pos.quantity:g}")
+    print(f"realized P&L:      {pos.realized_pnl}")
+    print(f"unrealized P&L:    {pos.unrealized_pnl}")
+    print(f"exit reason:       {pos.exit_reason.value if pos.exit_reason else None}")
+
+
+def test_lifecycle_negative_rejected_buy_naked_sell_duplicate_buy() -> None:
+    """Rejected BUY / SELL-with-no-lot / duplicate BUY must not open extra positions."""
+    engine = OrderExecutionEngine(broker=SimulatedBroker(_cfg(capital=100.0, quantity=10.0)))
+    pm = PositionManager()
+    runner = ReplayPositionRunner(engine, pm)
+
+    rejected_buy = runner.process_step(
+        _step(_rec(signal=SignalType.BUY, price=50.0, ts=TS0), close=50.0, replay_index=0),
+    )
+    buy_attempt = rejected_buy[-1]
+    assert not buy_attempt.accepted
+    assert buy_attempt.reason_code is RejectionReason.INSUFFICIENT_CASH
+    assert pm.get_open_positions() == []
+    assert pm.get_closed_positions() == []
+
+    engine2 = OrderExecutionEngine(broker=SimulatedBroker(_cfg(capital=10_000.0, quantity=10.0)))
+    pm2 = PositionManager()
+    runner2 = ReplayPositionRunner(engine2, pm2)
+    naked_sell = runner2.process_step(
+        _step(_rec(signal=SignalType.SELL, price=100.0, ts=TS0), close=100.0, replay_index=0),
+    )
+    sell_attempt = naked_sell[-1]
+    assert not sell_attempt.accepted
+    assert sell_attempt.reason_code is RejectionReason.NO_OPEN_POSITION
+    assert pm2.get_open_positions() == []
+    assert engine2.broker.cash == pytest.approx(10_000.0)
+
+    runner2.process_step(
+        _step(_rec(signal=SignalType.BUY, price=100.0, ts=TS0), close=100.0, replay_index=0),
+    )
+    assert pm2.get_position("RELIANCE") is not None
+    dup = runner2.process_step(
+        _step(_rec(signal=SignalType.BUY, price=101.0, ts=TS1), close=101.0, replay_index=1),
+    )
+    dup_attempt = dup[-1]
+    assert not dup_attempt.accepted
+    assert dup_attempt.reason_code is RejectionReason.ALREADY_HOLDING
+    pos = pm2.get_position("RELIANCE")
+    assert pos is not None
+    assert pos.quantity == pytest.approx(10.0)
+    assert pos.entry_price == pytest.approx(100.0)
+    assert len(pm2.get_open_positions()) == 1
+    assert pm2.get_closed_positions() == []
