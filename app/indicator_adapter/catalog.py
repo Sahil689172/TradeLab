@@ -83,10 +83,16 @@ def resolve_indicator_name(name: str, available_columns: set[str]) -> ResolvedIn
     if resolved in columns:
         return ResolvedIndicator(request=request, is_macd_bundle=False, column=resolved)
 
+    family = request.rsplit("_", 1)[0] if "_" in request else request
     suggestions = sorted(
-        column
-        for column in columns
-        if column == request or column.startswith(f"{request}_") or request in column
+        {
+            column
+            for column in columns
+            if column == request
+            or column.startswith(f"{request}_")
+            or request in column
+            or column.startswith(f"{family}_")
+        }
     )
     hint = f" Did you mean: {', '.join(suggestions[:8])}?" if suggestions else ""
     available_preview = ", ".join(sorted(columns)[:12])

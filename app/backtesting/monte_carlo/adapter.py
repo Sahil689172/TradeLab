@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
+from app.backtesting.monte_carlo.exceptions import MonteCarloDataError
 from app.backtesting.monte_carlo.schemas import MonteCarloTrade
 from app.backtesting.order_execution.schemas import ClosedTradeRecord
 from app.backtesting.position_manager.schemas import Position, PositionStatus
@@ -41,6 +42,10 @@ def _one(item: Any, *, index: int) -> MonteCarloTrade | None:
 
 
 def _from_closed(trade: ClosedTradeRecord, *, index: int) -> MonteCarloTrade:
+    if trade.entry_timestamp > trade.exit_timestamp:
+        raise MonteCarloDataError(
+            f"trade[{index}] entry_timestamp is after exit_timestamp",
+        )
     notional = trade.quantity * trade.entry_price
     costs = float(trade.brokerage) + float(trade.slippage)
     pnl = float(trade.net_profit)
@@ -154,7 +159,12 @@ def with_cost_perturbation(
     base_slippage_bps: float,
     commission_mult: float = 1.0,
 ) -> list[MonteCarloTrade]:
-    """Return a new list with net P&L adjusted for an alternate cost assumption."""
+    """Rebuild net P&L from gross under an alternate cost assumption.
+
+    Historical ``net_profit`` already includes brokerage and slippage.
+    This function copies trades and reconstructs ``gross - new_brokerage - new_slippage``.
+    It never subtracts costs from already-netted P&L.
+    """
     adjusted: list[MonteCarloTrade] = []
     for trade in trades:
         new_brokerage = trade.brokerage * commission_mult
@@ -164,7 +174,7 @@ def with_cost_perturbation(
             base_slippage_bps=base_slippage_bps,
         )
         new_costs = max(new_brokerage, 0.0) + max(new_slippage, 0.0)
-        new_pnl = trade.gross_pnl - new_costs
+        new_pnl = reconstruct_net_pnl(trade.gross_pnl, new_brokerage, new_slippage)
         notional = trade.quantity * trade.entry_price
         adjusted.append(
             trade.model_copy(
@@ -179,6 +189,16 @@ def with_cost_perturbation(
             ),
         )
     return adjusted
+
+
+def reconstruct_net_pnl(gross_pnl: float, brokerage: float, slippage: float) -> float:
+    """Rebuild net P&L from gross and a cost scenario.
+
+    Input trade logs already store ``net_profit`` with costs embedded.
+    Sensitivity must reconstruct from gross — never subtract the same costs
+    from already-netted P&L.
+    """
+    return float(gross_pnl) - max(float(brokerage), 0.0) - max(float(slippage), 0.0)
 
 
 def _scaled_slippage(

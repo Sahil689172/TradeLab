@@ -17,6 +17,7 @@ from app.confluence import (
     VerdictThresholds,
 )
 from app.feature_engine.pipeline import FeaturePipeline
+from app.feature_engine.strategy_frame import merge_ohlcv_features
 from app.levels.calculator import cpr_levels
 from app.levels.schemas import (
     CamarillaPivotLevels,
@@ -138,7 +139,7 @@ def make_levels(*, reference: float = 105.0, support: float = 104.8, resistance:
 def market_features() -> pd.DataFrame:
     ohlcv = make_prices(120)
     features = FeaturePipeline().transform(ohlcv)
-    return ohlcv.merge(features, on="date", how="left")
+    return merge_ohlcv_features(ohlcv, features)
 
 
 def test_default_weights_match_scorecard() -> None:

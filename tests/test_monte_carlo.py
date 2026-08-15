@@ -303,3 +303,269 @@ def test_shuffle_does_not_change_final_capital() -> None:
     finals = {round(s.final_equity, 8) for s in (result.simulation_summaries or [])}
     assert len(finals) == 1
     assert next(iter(finals)) == pytest.approx(2_065.0)
+
+
+def test_shuffle_preserves_trade_multiset_vectorized() -> None:
+    from app.backtesting.monte_carlo.engine import _sample_index_matrix
+
+    mat = _sample_index_matrix(
+        np.random.default_rng(9),
+        5,
+        40,
+        SamplingMethod.TRADE_SHUFFLE,
+    )
+    assert mat.shape == (40, 5)
+    for row in mat:
+        assert sorted(row.tolist()) == [0, 1, 2, 3, 4]
+
+
+def test_bootstrap_samples_with_replacement() -> None:
+    from app.backtesting.monte_carlo.engine import _sample_index_matrix
+
+    mat = _sample_index_matrix(
+        np.random.default_rng(0),
+        4,
+        300,
+        SamplingMethod.BOOTSTRAP,
+    )
+    assert mat.shape == (300, 4)
+    assert any(len(set(row.tolist())) < 4 for row in mat)
+
+
+def test_block_bootstrap_preserves_length_and_seed() -> None:
+    from app.backtesting.monte_carlo.engine import _sample_index_matrix
+
+    a = _sample_index_matrix(
+        np.random.default_rng(12),
+        9,
+        15,
+        SamplingMethod.BLOCK_BOOTSTRAP,
+        block_size=3,
+    )
+    b = _sample_index_matrix(
+        np.random.default_rng(12),
+        9,
+        15,
+        SamplingMethod.BLOCK_BOOTSTRAP,
+        block_size=3,
+    )
+    assert a.shape == (15, 9)
+    assert np.array_equal(a, b)
+    cfg = MonteCarloConfig(
+        simulations=30,
+        initial_capital=10_000,
+        random_seed=12,
+        sampling_method=SamplingMethod.BLOCK_BOOTSTRAP,
+        block_size=3,
+    )
+    trades = [_trade(x) for x in (10, -4, 8, -3, 6, -2, 5, -1, 4)]
+    first = MonteCarloEngine(cfg).run(trades)
+    second = MonteCarloEngine(cfg).run(trades)
+    assert first.return_percentiles.p50 == second.return_percentiles.p50
+    assert first.block_size == 3
+
+
+def test_nan_and_infinite_pnl_rejected() -> None:
+    from pydantic import ValidationError
+
+    from app.backtesting.monte_carlo.exceptions import MonteCarloDataError
+    from app.backtesting.monte_carlo.schemas import MonteCarloTrade
+
+    with pytest.raises(ValidationError):
+        MonteCarloTrade(pnl=float("nan"))
+    with pytest.raises(ValidationError):
+        MonteCarloTrade(pnl=float("inf"))
+    cfg = MonteCarloConfig(simulations=5, initial_capital=1_000, random_seed=1)
+    constructed = MonteCarloTrade.model_construct(pnl=float("nan"), return_pct=0.0, gross_pnl=0.0)
+    with pytest.raises(MonteCarloDataError):
+        MonteCarloEngine(cfg).run([constructed])
+    infinite = MonteCarloTrade.model_construct(pnl=float("inf"), return_pct=0.0, gross_pnl=0.0)
+    with pytest.raises(MonteCarloDataError):
+        MonteCarloEngine(cfg).run([infinite])
+
+
+def test_one_trade_and_tiny_sample_warning() -> None:
+    from app.backtesting.monte_carlo.schemas import MonteCarloVerdict, SampleQuality
+
+    cfg = MonteCarloConfig(simulations=10_000, initial_capital=10_000, random_seed=42)
+    one = MonteCarloEngine(cfg).run([_trade(25)])
+    assert one.source_trade_count == 1
+    assert one.sample_quality is SampleQuality.EXTREMELY_LOW
+    assert one.verdict is MonteCarloVerdict.INSUFFICIENT_EVIDENCE
+
+    tiny = MonteCarloEngine(cfg).run([_trade(10), _trade(-5)])
+    assert tiny.sample_quality is SampleQuality.EXTREMELY_LOW
+    assert tiny.verdict is MonteCarloVerdict.INSUFFICIENT_EVIDENCE
+    assert any("10,000 simulations generated from 2 historical trades" in w for w in tiny.warnings)
+    text = format_markdown_report(tiny)
+    assert "INSUFFICIENT_EVIDENCE" in text
+    assert "SAMPLE QUALITY" in text
+
+
+def test_additive_versus_return_based_capital() -> None:
+    from app.backtesting.monte_carlo.schemas import CapitalMode
+    from app.backtesting.monte_carlo.simulation import simulate_equity as sim
+
+    additive = sim([100.0, -50.0], initial_capital=1_000.0, capital_mode=CapitalMode.ADDITIVE_PNL)
+    ret = sim([0.10, -0.05], initial_capital=1_000.0, capital_mode=CapitalMode.RETURN_BASED)
+    assert additive.final_equity == pytest.approx(1_050.0)
+    assert ret.final_equity == pytest.approx(1_000.0 * 1.10 * 0.95)
+    assert additive.final_equity != pytest.approx(ret.final_equity)
+
+    cfg = MonteCarloConfig(
+        simulations=20,
+        initial_capital=1_000.0,
+        random_seed=3,
+        sampling_method=SamplingMethod.TRADE_SHUFFLE,
+        capital_mode=CapitalMode.RETURN_BASED,
+        store_simulation_summaries=True,
+    )
+    result = MonteCarloEngine(cfg).run([_trade(100.0), _trade(-50.0)])
+    assert result.capital_mode is CapitalMode.RETURN_BASED
+    finals = {round(s.final_equity, 8) for s in (result.simulation_summaries or [])}
+    assert len(finals) == 1
+    assert next(iter(finals)) == pytest.approx(1_000.0 * 1.10 * 0.95)
+
+
+def test_return_based_falls_back_without_notional() -> None:
+    from app.backtesting.monte_carlo.schemas import CapitalMode, MonteCarloTrade
+
+    cfg = MonteCarloConfig(
+        simulations=10,
+        initial_capital=1_000.0,
+        random_seed=1,
+        capital_mode=CapitalMode.RETURN_BASED,
+    )
+    trade = MonteCarloTrade(pnl=40.0, return_pct=0.0, quantity=0.0, entry_price=0.0)
+    result = MonteCarloEngine(cfg).run([trade])
+    assert result.capital_mode is CapitalMode.ADDITIVE_PNL
+    assert any("remaining in ADDITIVE_PNL" in w for w in result.warnings)
+
+
+def test_percentile_linear_definition() -> None:
+    from app.backtesting.monte_carlo.engine import _percentiles
+    from app.backtesting.monte_carlo.schemas import PERCENTILE_LEVELS
+
+    values = np.arange(1.0, 101.0)
+    got = _percentiles(values)
+    expected = np.percentile(values, PERCENTILE_LEVELS, method="linear")
+    assert got.p01 == pytest.approx(float(expected[0]))
+    assert got.p50 == pytest.approx(float(expected[4]))
+    assert got.p99 == pytest.approx(float(expected[8]))
+
+
+def test_no_double_counted_costs() -> None:
+    trade = _trade(100.0, slip=10.0, broker=5.0)
+    cfg = MonteCarloConfig(
+        simulations=40,
+        initial_capital=10_000,
+        random_seed=42,
+        sampling_method=SamplingMethod.BOOTSTRAP,
+        include_cost_perturbation=True,
+        slippage_range_bps=(5.0,),
+        base_slippage_bps=5.0,
+        commission_range_mult=(1.0,),
+    )
+    result = MonteCarloEngine(cfg).run([trade, _trade(-20.0, slip=2.0, broker=1.0)])
+    assert len(result.cost_sensitivity) == 1
+    row = result.cost_sensitivity[0]
+    assert row.incremental_cost == pytest.approx(0.0)
+    assert row.base_cost == pytest.approx(row.scenario_cost)
+    assert row.median_return == pytest.approx(result.return_percentiles.p50)
+    assert row.probability_of_loss == pytest.approx(result.probability_of_loss)
+
+
+def test_invalid_configuration_rejected() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        MonteCarloConfig(simulations=0)
+    with pytest.raises(ValidationError):
+        MonteCarloConfig(initial_capital=0)
+    with pytest.raises(ValidationError):
+        MonteCarloConfig(ruin_threshold=0)
+    with pytest.raises(ValidationError):
+        MonteCarloConfig(block_size=0)
+
+
+def test_extremely_large_pnl_remains_finite() -> None:
+    summary = simulate_equity([1e12], initial_capital=1_000_000.0)
+    assert np.isfinite(summary.final_equity)
+    assert summary.final_equity == pytest.approx(1_000_000.0 + 1e12)
+
+
+def test_reproducible_json_output(tmp_path: Path) -> None:
+    import json
+
+    trades = [_trade(40), _trade(-15), _trade(25), _trade(-10), _trade(8)]
+    cfg = MonteCarloConfig(
+        simulations=80,
+        initial_capital=5_000,
+        random_seed=42,
+        sampling_method=SamplingMethod.BOOTSTRAP,
+    )
+    first = MonteCarloEngine(cfg).run(trades, strategy="ema_trend", symbol="RELIANCE")
+    second = MonteCarloEngine(cfg).run(trades, strategy="ema_trend", symbol="RELIANCE")
+    dump_a = json.dumps(first.model_dump(mode="json", exclude={"simulation_summaries"}), sort_keys=True)
+    dump_b = json.dumps(second.model_dump(mode="json", exclude={"simulation_summaries"}), sort_keys=True)
+    assert dump_a == dump_b
+    paths = write_outputs(first, output_dir=tmp_path, stem="json_repro")
+    payload = json.loads(paths["json"].read_text(encoding="utf-8"))
+    assert payload["seed"] == 42
+    assert payload["capital_mode"] == "ADDITIVE_PNL"
+    assert payload["engine_kind"] == "TradeResamplingMonteCarlo"
+    assert "resampling_limitation" in payload
+    other = MonteCarloEngine(cfg.model_copy(update={"random_seed": 99})).run(trades)
+    assert first.final_capital_percentiles.model_dump() != other.final_capital_percentiles.model_dump()
+
+
+def test_report_schema_sections() -> None:
+    from app.backtesting.monte_carlo.schemas import MonteCarloVerdict
+
+    result = MonteCarloEngine(
+        MonteCarloConfig(simulations=30, initial_capital=10_000, random_seed=2),
+    ).run([_trade(10), _trade(-4), _trade(8)])
+    text = format_markdown_report(result)
+    for section in (
+        "HISTORICAL OBSERVATION",
+        "MONTE CARLO",
+        "DISTRIBUTION",
+        "RISK",
+        "SAMPLE QUALITY",
+        "VERDICT",
+        "Monte Carlo percentile interval",
+        "Overall Robustness",
+    ):
+        assert section in text
+    dumped = result.model_dump()
+    assert result.verdict is MonteCarloVerdict.INSUFFICIENT_EVIDENCE
+    assert "sample_quality" in dumped
+    assert "capital_mode" in dumped
+
+
+def test_path_dependent_not_implemented() -> None:
+    from app.backtesting.monte_carlo import PathDependentMonteCarlo, PathDependentNotImplementedError
+
+    with pytest.raises(PathDependentNotImplementedError):
+        PathDependentMonteCarlo().run([])
+
+
+def test_synthetic_hundred_trades_sample_quality() -> None:
+    from app.backtesting.monte_carlo import make_synthetic_trades
+    from app.backtesting.monte_carlo.schemas import SampleQuality
+
+    trades = make_synthetic_trades(100, seed=1)
+    assert len(trades) == 100
+    result = MonteCarloEngine(
+        MonteCarloConfig(
+            simulations=200,
+            initial_capital=1_000_000,
+            random_seed=42,
+            sampling_method=SamplingMethod.BOOTSTRAP,
+        ),
+    ).run(trades)
+    assert result.source_trade_count == 100
+    assert result.sample_quality is SampleQuality.STRONGER
+    assert result.engine_kind == "TradeResamplingMonteCarlo"
+    assert result.capital_mode.value == "ADDITIVE_PNL"
+

@@ -133,6 +133,14 @@ This preserves: **business logic independent of routes**, **ML independent of Fa
 
 - Validate simulation config; run **MonteCarloEngine**; store summaries in DB and optional path payloads in S3.
 
+**A5.6 implementation (current):** trade-resampling Monte Carlo lives in
+`app/backtesting/monte_carlo/`. It resamples completed A5.2 trades
+(shuffle / bootstrap / block bootstrap). It does not re-run the full
+strategy → execution → position-manager pipeline. Path-dependent Monte Carlo
+is an explicit future extension point (`PathDependentMonteCarlo`).
+
+See [`docs/monte_carlo.md`](monte_carlo.md).
+
 ### 3.7 Strategy Subsystem
 
 **Responsibilities**

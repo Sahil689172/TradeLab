@@ -16,6 +16,7 @@ from app.exit_engine import (
 )
 from app.exit_engine.supertrend import compute_supertrend
 from app.feature_engine.pipeline import FeaturePipeline
+from app.feature_engine.strategy_frame import merge_ohlcv_features
 from tests.test_indicators import make_prices
 
 
@@ -315,7 +316,7 @@ def test_short_fixed_target(engine: ExitEngine) -> None:
 def test_works_with_feature_pipeline_columns() -> None:
     ohlcv = make_prices(80)
     features = FeaturePipeline().transform(ohlcv)
-    market = ohlcv.merge(features, on="date", how="left")
+    market = merge_ohlcv_features(ohlcv, features)
     engine = ExitEngine(
         ExitConfig(
             enabled_methods=(ExitMethod.EMA_EXIT, ExitMethod.ATR_EXIT),

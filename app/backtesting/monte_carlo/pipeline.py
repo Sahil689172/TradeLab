@@ -7,7 +7,10 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from app.backtesting.monte_carlo.adapter import trades_from_sources
+from app.backtesting.monte_carlo.exceptions import MonteCarloConfigError
 from app.backtesting.monte_carlo.schemas import MonteCarloTrade
 from app.backtesting.order_execution import ExecutionConfig, OrderExecutionEngine, PositionSizingMode
 from app.backtesting.order_execution.schemas import ClosedTradeRecord
@@ -100,3 +103,43 @@ def _period(trades: list[ClosedTradeRecord]) -> str:
     start = min(t.entry_timestamp for t in trades).date()
     end = max(t.exit_timestamp for t in trades).date()
     return f"{start.isoformat()} → {end.isoformat()}"
+
+
+def make_synthetic_trades(
+    count: int,
+    *,
+    seed: int = 1,
+    quantity: float = 10.0,
+    entry_price: float = 100.0,
+) -> list[MonteCarloTrade]:
+    """Deterministic synthetic completed trades for benchmarks and tests."""
+    if count < 1:
+        raise MonteCarloConfigError("synthetic trade count must be >= 1")
+
+    rng = np.random.default_rng(int(seed))
+    pnl = np.clip(rng.normal(20.0, 80.0, size=int(count)), -400.0, 400.0)
+    trades: list[MonteCarloTrade] = []
+    notional = quantity * entry_price
+    for index, value in enumerate(pnl):
+        net = float(value)
+        brokerage = 0.50
+        slippage = 0.50
+        costs = brokerage + slippage
+        trades.append(
+            MonteCarloTrade(
+                pnl=net,
+                return_pct=net / notional,
+                costs=costs,
+                brokerage=brokerage,
+                slippage=slippage,
+                gross_pnl=net + costs,
+                holding_period=1,
+                win_loss=1 if net > 0 else (-1 if net < 0 else 0),
+                source_trade_id=f"SYNTHETIC:{index}",
+                symbol="SYNTHETIC",
+                quantity=quantity,
+                entry_price=entry_price,
+                exit_price=entry_price + net / quantity,
+            ),
+        )
+    return trades

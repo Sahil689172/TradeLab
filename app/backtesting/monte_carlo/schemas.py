@@ -6,6 +6,7 @@ does not claim to forecast future profitability.
 
 from __future__ import annotations
 
+import math
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -19,12 +20,54 @@ class SamplingMethod(str, Enum):
 
     TRADE_SHUFFLE = "shuffle"
     BOOTSTRAP = "bootstrap"
+    BLOCK_BOOTSTRAP = "block_bootstrap"
+
+
+class CapitalMode(str, Enum):
+    """How completed-trade P&L is applied to equity. Never mixed silently."""
+
+    ADDITIVE_PNL = "ADDITIVE_PNL"
+    RETURN_BASED = "RETURN_BASED"
+
+
+class SampleQuality(str, Enum):
+    """Reporting-quality label. Not a claim of statistical sufficiency."""
+
+    INVALID = "INVALID"
+    EXTREMELY_LOW = "EXTREMELY_LOW"
+    LOW = "LOW"
+    LIMITED = "LIMITED"
+    MODERATE = "MODERATE"
+    STRONGER = "STRONGER"
+
+
+class MonteCarloVerdict(str, Enum):
+    """Evidence verdict. Constrained by sample size; not PASS/FAIL."""
+
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+    WEAK = "WEAK"
+    LIMITED = "LIMITED"
+    PROMISING = "PROMISING"
+    ROBUST = "ROBUST"
 
 
 class RobustnessBand(str, Enum):
     HIGH = "HIGH"
     MEDIUM = "MEDIUM"
     LOW = "LOW"
+
+
+RESAMPLING_LIMITATION = (
+    "Trade-resampling Monte Carlo applies historical net_profit (ADDITIVE_PNL) or "
+    "trade returns (RETURN_BASED) to copies of completed trades. It does not re-run "
+    "position sizing, order execution, or the position manager. Simulations resample "
+    "historical evidence; they do not create new independent historical observations."
+)
+
+PERCENTILE_METHOD = (
+    "numpy.percentile method='linear' — Monte Carlo percentile interval, "
+    "not a statistical confidence interval"
+)
 
 
 class MonteCarloConfig(BaseModel):
@@ -36,6 +79,8 @@ class MonteCarloConfig(BaseModel):
     initial_capital: float = Field(default=1_000_000.0, gt=0.0)
     random_seed: int = Field(default=42)
     sampling_method: SamplingMethod = SamplingMethod.BOOTSTRAP
+    capital_mode: CapitalMode = CapitalMode.ADDITIVE_PNL
+    block_size: int = Field(default=5, ge=1)
     include_cost_perturbation: bool = False
     slippage_range_bps: tuple[float, ...] = (0.0, 5.0, 10.0, 15.0, 20.0)
     base_slippage_bps: float = Field(default=5.0, ge=0.0)
@@ -80,6 +125,13 @@ class MonteCarloTrade(BaseModel):
     entry_price: float = Field(default=0.0, ge=0.0)
     exit_price: float = Field(default=0.0, ge=0.0)
 
+    @field_validator("pnl", "return_pct", "gross_pnl", "costs", "brokerage", "slippage")
+    @classmethod
+    def finite_number(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("must be a finite number (NaN/inf rejected)")
+        return value
+
 
 class PercentileSummary(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -108,6 +160,10 @@ class SimulationSummary(BaseModel):
     losing_trades: int = Field(..., ge=0)
     longest_losing_streak: int = Field(..., ge=0)
     longest_winning_streak: int = Field(..., ge=0)
+    net_profit: float = 0.0
+    max_drawdown_pct: float = 0.0
+    volatility: float = 0.0
+    sharpe: float = 0.0
 
 
 class CostSensitivityRow(BaseModel):
@@ -119,6 +175,10 @@ class CostSensitivityRow(BaseModel):
     p95_max_drawdown: float
     probability_of_loss: float
     probability_of_profit: float
+    base_cost: float = 0.0
+    scenario_cost: float = 0.0
+    incremental_cost: float = 0.0
+    final_simulated_pnl: float = 0.0
 
 
 class RobustnessAssessment(BaseModel):
@@ -149,8 +209,15 @@ class MonteCarloResult(BaseModel):
     simulations: int
     seed: int
     sampling_method: SamplingMethod
+    capital_mode: CapitalMode = CapitalMode.ADDITIVE_PNL
+    engine_kind: str = "TradeResamplingMonteCarlo"
+    block_size: int | None = None
     initial_capital: float
     source_trade_count: int
+    sample_quality: SampleQuality = SampleQuality.INVALID
+    verdict: MonteCarloVerdict = MonteCarloVerdict.INSUFFICIENT_EVIDENCE
+    resampling_limitation: str = RESAMPLING_LIMITATION
+    percentile_method: str = PERCENTILE_METHOD
     historical: HistoricalSnapshot
     final_capital_percentiles: PercentileSummary
     return_percentiles: PercentileSummary

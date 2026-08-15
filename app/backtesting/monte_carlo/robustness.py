@@ -1,13 +1,22 @@
-"""Transparent robustness score. Not a black-box rating and not a profitability proof."""
+"""Transparent robustness score and sample-capped evidence verdict.
+
+The numeric band is a diagnostic. The verdict is separately capped by
+historical sample size so a tiny trade log cannot be labeled ROBUST.
+"""
 
 from __future__ import annotations
 
+import numpy as np
+
 from app.backtesting.monte_carlo.schemas import (
     CostSensitivityRow,
+    MonteCarloVerdict,
     RobustnessAssessment,
     RobustnessBand,
+    SampleQuality,
     SimulationSummary,
 )
+from app.backtesting.monte_carlo.simulation import summary_from_batch
 
 FORMULA = (
     "Start at 100. Deduct: min(40, 100*P(loss)); "
@@ -16,9 +25,87 @@ FORMULA = (
     "P95 losing streak ≥8 −10, ≥5 −5; "
     "cost-sensitivity ΔP(loss) ≥10pp −15, ≥5pp −8; "
     "sample size <5 −40 and cap LOW, <10 −25 and cap MEDIUM, <20 −10. "
-    "HIGH only if score≥70, n≥10, P(loss)<20%, P95 |DD|<25%, and median return>0. "
-    "Median profit alone is never sufficient for HIGH."
+    "HIGH band only if score≥70, n≥10, P(loss)<20%, P95 |DD|<25%, and median return>0. "
+    "Verdict is separate and sample-capped: 0–4 trades → INSUFFICIENT_EVIDENCE; "
+    "5–19 max WEAK; 20–49 max LIMITED; 50–99 max PROMISING; 100+ may be ROBUST. "
+    "Median profit alone is never sufficient for HIGH or ROBUST. "
+    "Simulations do not create new independent historical observations."
 )
+
+
+def classify_sample_quality(historical_trade_count: int) -> SampleQuality:
+    """Reporting-quality label. Not a claim of statistical sufficiency."""
+    n = historical_trade_count
+    if n <= 0:
+        return SampleQuality.INVALID
+    if n <= 4:
+        return SampleQuality.EXTREMELY_LOW
+    if n <= 19:
+        return SampleQuality.LOW
+    if n <= 49:
+        return SampleQuality.LIMITED
+    if n <= 99:
+        return SampleQuality.MODERATE
+    return SampleQuality.STRONGER
+
+
+def _verdict_rank(verdict: MonteCarloVerdict) -> int:
+    order = (
+        MonteCarloVerdict.INSUFFICIENT_EVIDENCE,
+        MonteCarloVerdict.WEAK,
+        MonteCarloVerdict.LIMITED,
+        MonteCarloVerdict.PROMISING,
+        MonteCarloVerdict.ROBUST,
+    )
+    return order.index(verdict)
+
+
+def _cap_verdict(quality: SampleQuality, raw: MonteCarloVerdict) -> MonteCarloVerdict:
+    ceiling = {
+        SampleQuality.INVALID: MonteCarloVerdict.INSUFFICIENT_EVIDENCE,
+        SampleQuality.EXTREMELY_LOW: MonteCarloVerdict.INSUFFICIENT_EVIDENCE,
+        SampleQuality.LOW: MonteCarloVerdict.WEAK,
+        SampleQuality.LIMITED: MonteCarloVerdict.LIMITED,
+        SampleQuality.MODERATE: MonteCarloVerdict.PROMISING,
+        SampleQuality.STRONGER: MonteCarloVerdict.ROBUST,
+    }[quality]
+    if _verdict_rank(raw) > _verdict_rank(ceiling):
+        return ceiling
+    return raw
+
+
+def assess_verdict(
+    *,
+    source_trade_count: int,
+    probability_of_loss: float,
+    median_return: float,
+    p95_max_drawdown: float,
+    score: float,
+) -> MonteCarloVerdict:
+    """Distribution-based verdict, then hard-capped by sample quality."""
+    n = source_trade_count
+    quality = classify_sample_quality(n)
+    if n <= 0:
+        return MonteCarloVerdict.INSUFFICIENT_EVIDENCE
+
+    p95_dd = abs(p95_max_drawdown)
+    if (
+        n >= 100
+        and score >= 70
+        and probability_of_loss < 0.20
+        and p95_dd < 0.25
+        and median_return > 0
+    ):
+        raw = MonteCarloVerdict.ROBUST
+    elif score >= 60 and median_return > 0 and probability_of_loss < 0.40:
+        raw = MonteCarloVerdict.PROMISING
+    elif score >= 45:
+        raw = MonteCarloVerdict.LIMITED
+    elif score > 0:
+        raw = MonteCarloVerdict.WEAK
+    else:
+        raw = MonteCarloVerdict.INSUFFICIENT_EVIDENCE
+    return _cap_verdict(quality, raw)
 
 
 def assess_robustness(
@@ -112,6 +199,11 @@ def assess_robustness(
     elif cap is RobustnessBand.MEDIUM and band is RobustnessBand.HIGH:
         band = RobustnessBand.MEDIUM
 
+    reasons.append(
+        f"sample quality = {classify_sample_quality(n).value}; "
+        "verdict is capped by historical trade count, not by simulation count",
+    )
+
     return RobustnessAssessment(
         band=band,
         score=round(score, 1),
@@ -130,3 +222,20 @@ def pick_cases(
     best = by_final[-1]
     median = by_final[len(by_final) // 2]
     return worst, median, best
+
+
+def pick_cases_from_batch(
+    batch: dict[str, np.ndarray],
+) -> tuple[SimulationSummary | None, SimulationSummary | None, SimulationSummary | None]:
+    finals = batch["final"]
+    if finals.size == 0:
+        return None, None, None
+    order = np.argsort(finals, kind="mergesort")
+    worst_i = int(order[0])
+    best_i = int(order[-1])
+    median_i = int(order[finals.size // 2])
+    return (
+        summary_from_batch(batch, worst_i),
+        summary_from_batch(batch, median_i),
+        summary_from_batch(batch, best_i),
+    )

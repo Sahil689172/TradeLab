@@ -21,7 +21,10 @@ def write_outputs(
     csv_path = output_dir / f"{stem}_monte_carlo.csv"
 
     payload = result.model_dump(mode="json", exclude={"simulation_summaries"})
-    json_path.write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
+    json_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False, default=str) + "\n",
+        encoding="utf-8",
+    )
     md_path.write_text(format_markdown_report(result), encoding="utf-8")
     csv_path.write_text(_csv(result), encoding="utf-8")
     return {"json": json_path, "md": md_path, "csv": csv_path}
@@ -29,6 +32,14 @@ def write_outputs(
 
 def _csv(result: MonteCarloResult) -> str:
     lines = [
+        f"capital_mode,{result.capital_mode.value}",
+        f"method,{result.sampling_method.value}",
+        f"seed,{result.seed}",
+        f"simulations,{result.simulations}",
+        f"historical_trade_count,{result.source_trade_count}",
+        f"sample_quality,{result.sample_quality.value}",
+        f"verdict,{result.verdict.value}",
+        "",
         "metric,p01,p05,p10,p25,p50,p75,p90,p95,p99",
         _csv_row("final_capital", result.final_capital_percentiles),
         _csv_row("return", result.return_percentiles),
