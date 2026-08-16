@@ -58,6 +58,7 @@ def _features(ohlcv: pd.DataFrame) -> pd.DataFrame:
         frame[f"ema_{period}"] = close.ewm(span=period, adjust=False).mean()
     frame["adx_14"] = 28.0
     frame["atr_14"] = 1.5
+    frame["rsi_14"] = 55.0
     frame["relative_volume_20"] = 1.8
     frame["volume_sma_20"] = frame["volume"].rolling(20, min_periods=1).mean()
     return frame

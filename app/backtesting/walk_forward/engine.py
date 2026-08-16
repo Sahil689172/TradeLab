@@ -50,12 +50,14 @@ class WalkForwardEngine:
         runner: Callable[..., PeriodRun] | None = None,
         evaluator: object | None = None,
         strategy_factory: object | None = None,
+        progress: Callable[[str], None] | None = None,
     ) -> None:
         self._config = config or WalkForwardConfig()
         self._selector = selector
         self._runner = runner or run_period
         self._evaluator = evaluator
         self._strategy_factory = strategy_factory
+        self._progress = progress or (lambda _message: None)
 
     @property
     def config(self) -> WalkForwardConfig:
@@ -82,6 +84,15 @@ class WalkForwardEngine:
         capital = float(self._config.initial_capital)
         rejected_total = 0
         extra = _runner_extras(self._evaluator, self._strategy_factory)
+        extra["frame_cache"] = {}
+        n_cand_hint = _candidate_count(self._config, names[0])
+        self._progress(
+            f"Data {data_start.isoformat()} → {data_end.isoformat()} | "
+            f"{len(windows)} window(s) | {n_cand_hint} train candidate(s) | "
+            f"{len(names)} symbol(s)",
+        )
+        if not windows:
+            self._progress("No complete train/test windows fit this date range.")
 
         for window in windows:
             frozen_joint = None
@@ -102,6 +113,10 @@ class WalkForwardEngine:
                     leakage = _fail_leakage(leakage, f"joint train saw {train_max}")
 
             for symbol in names:
+                self._progress(
+                    f"Window {window.window_id}/{len(windows)} {symbol} "
+                    f"TRAIN {window.train_label} ({n_cand_hint} candidate(s), one replay)...",
+                )
                 if frozen_joint is None:
                     frozen, train_metrics, n_cand, train_max = (self._selector or select_on_train)(
                         symbol=symbol,
@@ -136,6 +151,10 @@ class WalkForwardEngine:
                     capital
                     if self._config.capital_mode is CapitalMode.COMPOUNDED
                     else self._config.initial_capital
+                )
+                self._progress(
+                    f"Window {window.window_id}/{len(windows)} {symbol} "
+                    f"TEST {window.test_label} frozen={train_metrics.config_key}...",
                 )
                 period = self._runner(
                     symbol=symbol,
@@ -177,6 +196,10 @@ class WalkForwardEngine:
                 rejected_total += period.rejected_count
                 if self._config.capital_mode is CapitalMode.COMPOUNDED:
                     capital = ending
+                self._progress(
+                    f"Window {window.window_id}/{len(windows)} {symbol} done | "
+                    f"OOS trades={len(period.trades)} return={period.metrics.return_pct:.2%}",
+                )
 
         oos_equity = stitch_equity(
             equity_segments,
@@ -272,6 +295,12 @@ class WalkForwardEngine:
             oos_rejected_count=rejected_total,
             generated_at=datetime.now(timezone.utc),
         )
+
+
+def _candidate_count(config: WalkForwardConfig, symbol: str) -> int:
+    from app.backtesting.walk_forward.search import iter_candidates
+
+    return sum(1 for _ in iter_candidates(config.search, symbol=symbol, min_history_bars=config.min_history_bars))
 
 
 def _runner_extras(evaluator: object | None, factory: object | None) -> dict[str, object]:

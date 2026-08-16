@@ -91,8 +91,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--ema200",
         choices=["on", "off", "both"],
-        default="both",
-        help="Search ema200 filter: on, off, or both (default both)",
+        default="on",
+        help="Search ema200 filter: on (default), off, or both. "
+        "both doubles the candidate count and runtime.",
     )
     parser.add_argument("--presets", default="9_21,12_26,20_50", help="EMA pair presets when --fast/--slow omitted")
     parser.add_argument("--max-candidates", type=int, default=24)
@@ -112,7 +113,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
+    def emit(message: str) -> None:
+        print(message, flush=True)
+
     args = parse_args(argv)
+    emit("TradeLab walk-forward (A5.9) — progress prints per window. Not a forecast.")
     settings = get_settings()
     storage_dir = Path(args.storage_dir) if args.storage_dir else Path(settings.parquet_storage_dir)
     symbols = _resolve_symbols(args, storage_dir)
@@ -148,18 +159,30 @@ def main(argv: list[str] | None = None) -> int:
         simulations=int(args.simulations),
         random_seed=int(args.seed),
     )
+    emit(f"Symbols: {', '.join(symbols)}")
+    emit(f"Storage: {storage_dir}")
+    emit(
+        f"Windows: train={config.train_years}y test={config.test_years}y step={config.step_years}y | "
+        f"ema200={args.ema200} | capital=₹{config.initial_capital:,.0f}",
+    )
+    emit("Loading parquet once, then one A5.1 train replay per window (all candidates)...")
     market = ParquetMarketDataAdapter(storage_dir)
     features = ParquetFeatureFrameAdapter(storage_dir)
-    result = WalkForwardEngine(config).run(symbols=symbols, market_data=market, features=features)
-    print(format_markdown_report(result))
+    result = WalkForwardEngine(config, progress=emit).run(
+        symbols=symbols,
+        market_data=market,
+        features=features,
+    )
+    emit("")
+    print(format_markdown_report(result), flush=True)
     stem = "_".join(symbols[:3]).lower()
     if len(symbols) > 3:
         stem += "_plus"
     out_dir = Path(args.output) if args.output else Path("backend/data/walk_forward") / stem
     paths = write_outputs(result, output_dir=out_dir)
-    print("Wrote:")
+    emit("Wrote:")
     for label, dest in paths.items():
-        print(f"  {label}: {dest}")
+        emit(f"  {label}: {dest}")
     return 0
 
 

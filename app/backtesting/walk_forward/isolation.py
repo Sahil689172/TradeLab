@@ -106,7 +106,7 @@ class CachedMarket:
         key = symbol.strip().upper()
         if key not in self._cache:
             self._cache[key] = self._inner.get_history(symbol)
-        return self._cache[key].copy()
+        return self._cache[key]
 
 
 class CachedFeatures:

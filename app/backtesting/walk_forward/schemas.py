@@ -62,7 +62,7 @@ class SearchSpace(BaseModel):
     fast_emas: tuple[int, ...] = ()
     slow_emas: tuple[int, ...] = ()
     adx_thresholds: tuple[float, ...] = (20.0,)
-    ema200_filters: tuple[bool, ...] = (True, False)
+    ema200_filters: tuple[bool, ...] = (True,)
     max_candidates: int = Field(default=24, ge=1, le=256)
 
 

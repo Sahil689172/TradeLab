@@ -62,15 +62,19 @@ Computing EMA200 from **only** 2023-01-01 onward is a different error
 
 A5.9 is not a general optimizer. It searches a **declared** grid only.
 
-Default EMA grid (six candidates):
+Default EMA grid (three candidates unless you widen it):
 
 - pair presets: `9_21`, `12_26`, `20_50`
 - ADX: `20`
-- EMA200 filter: enabled and disabled
+- EMA200 filter: enabled (`--ema200 on`)
 
-CLI `--fast`, `--slow`, `--adx`, and `--ema200` expand the grid. Combinations
-above `--max-candidates` (default 24) are rejected rather than silently
-exploded.
+`--ema200 both` also searches EMA200 disabled and **doubles** runtime. `--fast` /
+`--slow` / `--adx` expand the grid. Combinations above `--max-candidates`
+(default 24) are rejected rather than silently exploded.
+
+Training walks each window **once** with every declared candidate in the same
+A5.1 replay, then scores each candidate with a separate A5.2 broker. Out-of-sample
+still uses the frozen configuration only.
 
 Selection score (deterministic):
 

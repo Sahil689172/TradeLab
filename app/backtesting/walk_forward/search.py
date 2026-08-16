@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from app.backtesting.walk_forward.exceptions import WalkForwardConfigError
 from app.backtesting.walk_forward.schemas import SearchSpace
 from app.strategies.ema_trend import EMATrendConfig
+from app.strategies.ema_trend.presets import EMA_PAIR_PRESETS
 
 
 def iter_candidates(space: SearchSpace, *, symbol: str, min_history_bars: int) -> Iterator[EMATrendConfig]:
@@ -19,12 +20,12 @@ def iter_candidates(space: SearchSpace, *, symbol: str, min_history_bars: int) -
                     pairs.append((int(fast), int(slow)))
     else:
         for preset in space.ema_pair_presets:
-            cfg = EMATrendConfig.professional(
-                symbol=symbol,
-                ema_pair_preset=preset,
-                min_history_bars=min_history_bars,
-            )
-            pairs.append((cfg.fast_ema, cfg.slow_ema))
+            key = str(preset).strip().lower().replace("/", "_").replace("-", "_")
+            if key not in EMA_PAIR_PRESETS:
+                raise WalkForwardConfigError(
+                    f"Unknown ema_pair_preset '{preset}'. Known: {sorted(EMA_PAIR_PRESETS)}",
+                )
+            pairs.append(EMA_PAIR_PRESETS[key])
     seen: set[tuple[int, int, float, bool]] = set()
     adx_values = space.adx_thresholds or (20.0,)
     ema200_values = space.ema200_filters or (True,)
