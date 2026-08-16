@@ -19,7 +19,10 @@ from app.backtesting.monte_carlo.exceptions import (
     PathDependentNotImplementedError,
 )
 from app.backtesting.monte_carlo.export import write_outputs
-from app.backtesting.monte_carlo.path_dependent import PathDependentMonteCarlo
+from app.backtesting.monte_carlo.path_dependent import (
+    PathDependentMonteCarlo,
+    PathDependentPortfolioMonteCarlo,
+)
 from app.backtesting.monte_carlo.pipeline import (
     load_trades_from_json,
     load_trades_from_replay,
@@ -28,10 +31,12 @@ from app.backtesting.monte_carlo.pipeline import (
 from app.backtesting.monte_carlo.report import format_console_report, format_markdown_report
 from app.backtesting.monte_carlo.schemas import (
     CapitalMode,
+    EngineMode,
     MonteCarloConfig,
     MonteCarloResult,
     MonteCarloTrade,
     MonteCarloVerdict,
+    MonteCarloSizingMode,
     RobustnessBand,
     SampleQuality,
     SamplingMethod,
@@ -40,14 +45,17 @@ from app.backtesting.monte_carlo.simulation import simulate_equity
 
 __all__ = [
     "CapitalMode",
+    "EngineMode",
     "MonteCarloConfig",
     "MonteCarloConfigError",
     "MonteCarloDataError",
     "MonteCarloEngine",
     "MonteCarloResult",
     "MonteCarloTrade",
+    "MonteCarloSizingMode",
     "MonteCarloVerdict",
     "PathDependentMonteCarlo",
+    "PathDependentPortfolioMonteCarlo",
     "PathDependentNotImplementedError",
     "RobustnessBand",
     "SampleQuality",

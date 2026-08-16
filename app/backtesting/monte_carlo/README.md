@@ -9,18 +9,26 @@ independent historical observations.**
 ## Architecture
 
 ```text
-MonteCarloEngine                    # facade (A5.6)
-    └── TradeResamplingMonteCarlo
-          ├── shuffle               # permute the original P&L multiset
-          ├── bootstrap             # sample trades with replacement
-          └── block_bootstrap       # overlapping circular blocks
-
-PathDependentMonteCarlo             # FUTURE A5.x — not implemented
-    Strategy → Signal → Order Execution → Position Manager → Portfolio → Equity
+MonteCarloEngine                    # facade
+    ├── TradeResamplingMonteCarlo   # A5.6 (default)
+    │     ├── shuffle
+    │     ├── bootstrap
+    │     └── block_bootstrap
+    └── PathDependentMonteCarlo     # A5.7 PathDependentPortfolioMonteCarlo
+          resampled historical prices
+          → A5.2 sizing from current cash
+          → A5.2 slippage / brokerage
+          → updated equity
 ```
 
-This engine **does not** re-run position sizing, order execution, or the
-position manager for each simulation. Every result records that limitation.
+A5.6 adds historical rupee `net_profit`. A5.7 does **not**. It reallocates a
+fraction of **current cash** to each resampled trade's entry/exit prices.
+
+**Monte Carlo simulations resample historical evidence; they do not create new
+independent historical observations.**
+
+Full candle-level path Monte Carlo (Strategy → Signal → Execution → Position
+Manager) is still not implemented.
 
 ## Canonical inputs
 
@@ -60,8 +68,11 @@ the fallback. Every JSON result includes `capital_mode`.
 | `sampling_method` | `shuffle` / `bootstrap` / `block_bootstrap` |
 | `capital_mode` | `ADDITIVE_PNL` / `RETURN_BASED` |
 | `block_size` | Block length for block bootstrap (capped at trade count) |
+| `engine_mode` | `trade_resampling` (A5.6) or `path_dependent` (A5.7) |
+| `sizing_mode` | A5.7: `percent_of_equity` / `fixed_fractional` / `fixed_cash` |
+| `position_percent` | A5.7 fraction of current cash (e.g. 10 = 10%) |
 | `ruin_threshold` | ≤1 = fraction of initial capital; >1 = rupee floor |
-| `include_cost_perturbation` | Reconstruct net P&L from **gross** under alternate costs |
+| `include_cost_perturbation` | A5.6 reconstructs net from gross; A5.7 re-simulates with alternate slippage |
 
 ## Report
 
@@ -78,4 +89,5 @@ Percentiles are **Monte Carlo percentile intervals** (`numpy.percentile`,
 .venv\Scripts\python.exe backend\scripts\monte_carlo.py --symbol RELIANCE --strategy ema_trend --method bootstrap --simulations 10000 --seed 42
 .venv\Scripts\python.exe backend\scripts\monte_carlo.py --trades-json logs\trade_log.json --method shuffle --seed 42
 .venv\Scripts\python.exe backend\scripts\monte_carlo.py --synthetic-trades 100 --simulations 10000 --seed 42 --benchmark
+.venv\Scripts\python.exe backend\scripts\monte_carlo.py --trades-json tests\fixtures\monte_carlo_trades.json --mode path_dependent --position-percent 10 --simulations 10000 --seed 42 --cost-sensitivity --compare-a56
 ```

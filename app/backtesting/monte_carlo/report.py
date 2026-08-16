@@ -35,16 +35,49 @@ def format_markdown_report(result: MonteCarloResult) -> str:
         f"Sharpe (trade-level, not annualized): {h.sharpe_trade_level:.3f}",
         f"Initial capital: ₹{result.initial_capital:,.2f}",
         "",
-        "MONTE CARLO",
-        "-----------",
+        "MONTE CARLO CONFIGURATION",
+        "-------------------------",
         f"Method: {result.sampling_method.value}",
         f"Simulations: {result.simulations:,}",
         f"Seed: {result.seed}",
-        f"Capital model: {result.capital_mode.value}",
+        f"Capital model: {result.capital_model or result.capital_mode.value}",
         f"Block size: {result.block_size if result.block_size is not None else 'n/a'}",
         f"{result.simulations:,} simulations generated from {result.source_trade_count} historical trades.",
         result.resampling_limitation,
         "",
+    ]
+    if result.engine_kind == "PathDependentPortfolioMonteCarlo":
+        lines.extend(
+            [
+                "PATH-DEPENDENT CAPITAL MODEL",
+                "----------------------------",
+                f"Position sizing: {result.position_sizing_mode or 'n/a'}",
+                f"Position size parameters: {result.position_size_parameters}",
+                f"Execution cost parameters: {result.execution_cost_parameters}",
+                "Each trade is sized from current cash after the previous round-trip.",
+                "Historical rupee net_profit is not added.",
+                "",
+            ],
+        )
+    if result.comparison is not None:
+        c = result.comparison
+        lines.extend(
+            [
+                "A5.6 vs A5.7",
+                "------------",
+                f"A5.6 median return: {_pct(c.resampling_median_return)}  "
+                f"P95 |DD|: {_pct(c.resampling_p95_max_drawdown)}  "
+                f"P(loss): {_pct(c.resampling_probability_of_loss)}",
+                f"A5.7 median return: {_pct(c.path_dependent_median_return)}  "
+                f"P95 |DD|: {_pct(c.path_dependent_p95_max_drawdown)}  "
+                f"P(loss): {_pct(c.path_dependent_probability_of_loss)}",
+                c.modeling_difference,
+                "A5.7 is not 'better' merely because a number is larger or smaller.",
+                "",
+            ],
+        )
+    lines.extend(
+        [
         "DISTRIBUTION",
         "------------",
         "Monte Carlo percentile interval (numpy.percentile method='linear'; "
@@ -81,10 +114,11 @@ def format_markdown_report(result: MonteCarloResult) -> str:
         f"P95 losing streak: {streak.p95:.0f}",
         "",
         "Threshold probabilities:",
-    ]
+        ]
+    )
     for key, value in result.threshold_probabilities.items():
         lines.append(f"  {key}: {_pct(value)}")
-    lines.extend(["", "Execution cost sensitivity:"])
+    lines.extend(["", "COST SENSITIVITY", "----------------"])
     if result.cost_sensitivity:
         for row in result.cost_sensitivity:
             lines.append(
@@ -96,6 +130,10 @@ def format_markdown_report(result: MonteCarloResult) -> str:
                 f"base_cost ₹{row.base_cost:,.2f} "
                 f"scenario_cost ₹{row.scenario_cost:,.2f} "
                 f"incremental_cost ₹{row.incremental_cost:,.2f} "
+                f"brokerage_cost ₹{row.brokerage_cost:,.2f} "
+                f"slippage_cost ₹{row.slippage_cost:,.2f} "
+                f"total_execution_cost ₹{row.total_execution_cost:,.2f} "
+                f"median equity ₹{row.median_ending_equity:,.2f} "
                 f"final_simulated_pnl ₹{row.final_simulated_pnl:,.2f}",
             )
     else:

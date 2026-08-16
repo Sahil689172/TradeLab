@@ -8,7 +8,7 @@ Architecture (A5.6):
               ├── bootstrap
               └── block_bootstrap
 
-    PathDependentMonteCarlo  [FUTURE A5.x — not implemented]
+    PathDependentMonteCarlo  [A5.7 PathDependentPortfolioMonteCarlo]
 
 Trade-resampling randomizes trade *order* (shuffle) or trade *selection*
 (bootstrap / block bootstrap). It does not randomize P&L values or position
@@ -36,6 +36,7 @@ from app.backtesting.monte_carlo.schemas import (
     RESAMPLING_LIMITATION,
     CapitalMode,
     CostSensitivityRow,
+    EngineMode,
     HistoricalSnapshot,
     MonteCarloConfig,
     MonteCarloResult,
@@ -330,10 +331,16 @@ class TradeResamplingMonteCarlo:
 
 
 class MonteCarloEngine:
-    """Facade. A5.6 always uses TradeResamplingMonteCarlo."""
+    """Facade. Default is A5.6 TradeResamplingMonteCarlo."""
 
     def __init__(self, config: MonteCarloConfig | None = None) -> None:
-        self._impl = TradeResamplingMonteCarlo(config)
+        cfg = config or MonteCarloConfig()
+        if cfg.engine_mode is EngineMode.PATH_DEPENDENT:
+            from app.backtesting.monte_carlo.path_dependent import PathDependentMonteCarlo
+
+            self._impl = PathDependentMonteCarlo(cfg)
+        else:
+            self._impl = TradeResamplingMonteCarlo(cfg)
 
     @property
     def config(self) -> MonteCarloConfig:
@@ -539,6 +546,7 @@ def _result(
         seed=config.random_seed,
         sampling_method=config.sampling_method,
         capital_mode=capital_mode,
+        capital_model=capital_mode.value,
         engine_kind="TradeResamplingMonteCarlo",
         block_size=block_size,
         initial_capital=config.initial_capital,

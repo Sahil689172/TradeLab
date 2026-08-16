@@ -17,16 +17,18 @@ simulation.
 
 ```text
 MonteCarloEngine
-    ├── TradeResamplingMonteCarlo     # implemented (A5.6)
+    ├── TradeResamplingMonteCarlo     # A5.6 (default)
     │     ├── Shuffle
     │     ├── Bootstrap
     │     └── BlockBootstrap
-    └── PathDependentMonteCarlo       # FUTURE A5.x stub only
+    └── PathDependentMonteCarlo       # A5.7 PathDependentPortfolioMonteCarlo
 ```
 
-`PathDependentMonteCarlo` is an extension point for a later full pipeline
-(Strategy → Signal → Order Execution → Position Manager → Portfolio → Equity).
-It raises `PathDependentNotImplementedError` in this phase.
+A5.7 resamples historical completed-trade **prices** and sizes each trade from
+**current cash** using A5.2 slippage, brokerage, and percent-of-capital /
+fixed-amount rules. It still does **not** replay candles or re-generate signals.
+
+`--mode trade_resampling` (default) is A5.6. `--mode path_dependent` is A5.7.
 
 ## Canonical inputs
 
@@ -192,6 +194,40 @@ are rejected.
 .venv\Scripts\python.exe backend\scripts\monte_carlo.py --trades-json tests\fixtures\monte_carlo_trades.json --method shuffle --simulations 200 --seed 42 --initial-capital 10000
 .venv\Scripts\python.exe backend\scripts\monte_carlo.py --symbol RELIANCE --strategy ema_trend --method bootstrap --simulations 10000 --seed 42 --cost-sensitivity --capital-mode ADDITIVE_PNL
 .venv\Scripts\python.exe backend\scripts\monte_carlo.py --synthetic-trades 100 --simulations 10000 --seed 42 --benchmark --output backend\data\monte_carlo\bench_10k
+.venv\Scripts\python.exe backend\scripts\monte_carlo.py --trades-json tests\fixtures\monte_carlo_trades.json --mode path_dependent --position-sizing percent_of_equity --position-percent 10 --simulations 10000 --seed 42 --slippage-bps 5 --brokerage-rate 0.0003 --cost-sensitivity --compare-a56 --output backend\data\monte_carlo\path_dependent
 ```
 
 Outputs: `backend/data/monte_carlo/<stem>_monte_carlo.json|.md|.csv`.
+
+## A5.7 path-dependent portfolio model
+
+```text
+equity starts at initial_capital
+for each resampled historical trade:
+    allocate position_percent of current cash (or fixed_cash)
+    buy/sell at A5.2 slipped prices
+    pay A5.2 brokerage on both legs
+    equity += cash P&L
+```
+
+Without costs, percent-of-equity growth factors commute, so order may not change
+final equity. Whole-share rounding, flat brokerage, and non-zero slippage make
+order matter. Simulations still do not create new independent historical
+observations.
+
+### A5.7 assumptions and limitations
+
+- Still based on **historical completed trades**. Resampling does not create new
+  market information, signals, or independent observations.
+- When flat, A5.2 `percent_of_capital` (percent of **cash**) equals percent of
+  equity. A5.7 never holds overlapping positions in one simulation step.
+- Equity follows A5.2 **cash after BUY then SELL**. Execution prices already
+  include slippage; brokerage is charged on both legs. `realized_pnl` on the
+  broker is not used as the equity source (it can double-count slippage vs mid).
+- Historical rupee `net_profit` is **not** added in `percent_of_equity` mode.
+- Missing entry/exit prices cannot be invented; those trades are skipped
+  (idle) rather than synthesized.
+- A5.7 does **not** replay candles, re-run the strategy, or re-open overlapping
+  lots. Full market-path Monte Carlo remains out of scope.
+- Sample-quality and verdict gates are the same as A5.6: simulation count never
+  increases historical sample size.

@@ -33,6 +33,8 @@ def write_outputs(
 def _csv(result: MonteCarloResult) -> str:
     lines = [
         f"capital_mode,{result.capital_mode.value}",
+        f"capital_model,{result.capital_model or result.capital_mode.value}",
+        f"engine_kind,{result.engine_kind}",
         f"method,{result.sampling_method.value}",
         f"seed,{result.seed}",
         f"simulations,{result.simulations}",

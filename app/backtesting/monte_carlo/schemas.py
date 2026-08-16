@@ -28,6 +28,22 @@ class CapitalMode(str, Enum):
 
     ADDITIVE_PNL = "ADDITIVE_PNL"
     RETURN_BASED = "RETURN_BASED"
+    PATH_DEPENDENT_EQUITY = "PATH_DEPENDENT_EQUITY"
+
+
+class EngineMode(str, Enum):
+    """Which Monte Carlo engine the facade dispatches to."""
+
+    TRADE_RESAMPLING = "trade_resampling"
+    PATH_DEPENDENT = "path_dependent"
+
+
+class MonteCarloSizingMode(str, Enum):
+    """A5.7 allocation. percent_of_equity and fixed_fractional both use A5.2 percent-of-cash."""
+
+    PERCENT_OF_EQUITY = "percent_of_equity"
+    FIXED_FRACTIONAL = "fixed_fractional"
+    FIXED_CASH = "fixed_cash"
 
 
 class SampleQuality(str, Enum):
@@ -64,6 +80,13 @@ RESAMPLING_LIMITATION = (
     "historical evidence; they do not create new independent historical observations."
 )
 
+PATH_DEPENDENT_LIMITATION = (
+    "Path-dependent portfolio Monte Carlo resamples historical completed-trade "
+    "prices and reallocates capital from current cash after each round-trip using "
+    "A5.2 position sizing, slippage, and brokerage. It does not replay candles, "
+    "re-generate strategy signals, or create new independent historical observations."
+)
+
 PERCENTILE_METHOD = (
     "numpy.percentile method='linear' — Monte Carlo percentile interval, "
     "not a statistical confidence interval"
@@ -90,6 +113,20 @@ class MonteCarloConfig(BaseModel):
     return_thresholds: tuple[float, ...] = (0.10, 0.20)
     drawdown_thresholds: tuple[float, ...] = (0.10, 0.20, 0.30)
     store_simulation_summaries: bool = False
+    engine_mode: EngineMode = EngineMode.TRADE_RESAMPLING
+    sizing_mode: MonteCarloSizingMode = MonteCarloSizingMode.PERCENT_OF_EQUITY
+    position_percent: float = Field(default=10.0, gt=0.0, le=100.0)
+    fixed_cash_amount: float | None = None
+    brokerage_rate: float = Field(default=0.0003, ge=0.0)
+    brokerage_flat: float = Field(default=0.0, ge=0.0)
+    allow_fractional_shares: bool = True
+    min_quantity: float = Field(default=1.0, gt=0.0)
+    compare_engines: bool = False
+
+    @property
+    def slippage_bps(self) -> float:
+        """CLI ``--slippage-bps`` maps here (same value as ``base_slippage_bps``)."""
+        return self.base_slippage_bps
 
     @field_validator("slippage_range_bps", "commission_range_mult", "return_thresholds", "drawdown_thresholds")
     @classmethod
@@ -164,6 +201,13 @@ class SimulationSummary(BaseModel):
     max_drawdown_pct: float = 0.0
     volatility: float = 0.0
     sharpe: float = 0.0
+    win_rate: float = 0.0
+    profit_factor: float = 0.0
+    trade_count: int = Field(default=0, ge=0)
+    total_cost: float = 0.0
+    total_slippage_cost: float = 0.0
+    total_brokerage_cost: float = 0.0
+    gross_pnl: float = 0.0
 
 
 class CostSensitivityRow(BaseModel):
@@ -179,6 +223,28 @@ class CostSensitivityRow(BaseModel):
     scenario_cost: float = 0.0
     incremental_cost: float = 0.0
     final_simulated_pnl: float = 0.0
+    brokerage_cost: float = 0.0
+    slippage_cost: float = 0.0
+    total_execution_cost: float = 0.0
+    median_ending_equity: float = 0.0
+
+
+class EngineComparison(BaseModel):
+    """A5.6 vs A5.7 on the same trades/seed/simulations. Not a quality ranking."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    resampling_median_return: float = 0.0
+    resampling_p95_max_drawdown: float = 0.0
+    resampling_probability_of_loss: float = 0.0
+    path_dependent_median_return: float = 0.0
+    path_dependent_p95_max_drawdown: float = 0.0
+    path_dependent_probability_of_loss: float = 0.0
+    modeling_difference: str = (
+        "A5.6 adds historical rupee net_profit (additive). A5.7 reallocates a "
+        "fraction of current cash to each resampled trade's price path using A5.2 "
+        "costs. Different numbers do not mean one engine is more profitable."
+    )
 
 
 class RobustnessAssessment(BaseModel):
@@ -210,6 +276,7 @@ class MonteCarloResult(BaseModel):
     seed: int
     sampling_method: SamplingMethod
     capital_mode: CapitalMode = CapitalMode.ADDITIVE_PNL
+    capital_model: str = ""
     engine_kind: str = "TradeResamplingMonteCarlo"
     block_size: int | None = None
     initial_capital: float
@@ -241,3 +308,7 @@ class MonteCarloResult(BaseModel):
     symbol: str = ""
     period: str = ""
     simulation_summaries: list[SimulationSummary] | None = None
+    comparison: EngineComparison | None = None
+    position_sizing_mode: str | None = None
+    position_size_parameters: dict[str, float] = Field(default_factory=dict)
+    execution_cost_parameters: dict[str, float] = Field(default_factory=dict)

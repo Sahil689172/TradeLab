@@ -8,6 +8,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from app.backtesting.monte_carlo.schemas import (
+    PATH_DEPENDENT_LIMITATION,
     RESAMPLING_LIMITATION,
     CapitalMode,
     MonteCarloConfig,
@@ -37,7 +38,10 @@ def collect_warnings(
             f"SAMPLE_QUALITY={sample_quality.value}; VERDICT={verdict.value} "
             f"(historical_trade_count=0, simulation_count={config.simulations}).",
         )
-        warnings.append(RESAMPLING_LIMITATION)
+        if capital_mode is CapitalMode.PATH_DEPENDENT_EQUITY:
+            warnings.append(PATH_DEPENDENT_LIMITATION)
+        else:
+            warnings.append(RESAMPLING_LIMITATION)
         return warnings
 
     warnings.append(
@@ -115,13 +119,20 @@ def collect_warnings(
             "CAPITAL_MODE=ADDITIVE_PNL: equity[t] = equity[t-1] + trade_net_profit[t]. "
             "This does not re-run position sizing, so path-dependent share counts are not modeled.",
         )
-    else:
+        warnings.append(RESAMPLING_LIMITATION)
+    elif capital_mode is CapitalMode.RETURN_BASED:
         warnings.append(
             "CAPITAL_MODE=RETURN_BASED: equity[t] = equity[t-1] * (1 + return[t]). "
             "This is not interchangeable with ADDITIVE_PNL.",
         )
-
-    warnings.append(RESAMPLING_LIMITATION)
+        warnings.append(RESAMPLING_LIMITATION)
+    else:
+        warnings.append(
+            "CAPITAL_MODE=PATH_DEPENDENT_EQUITY: each trade is sized from current cash "
+            "using A5.2 percent-of-capital / fixed-amount rules, then filled with A5.2 "
+            "slippage and brokerage. Historical rupee net_profit is not added.",
+        )
+        warnings.append(PATH_DEPENDENT_LIMITATION)
     return warnings
 
 

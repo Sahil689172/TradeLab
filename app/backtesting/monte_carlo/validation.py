@@ -27,7 +27,11 @@ def validate_trades(
     *,
     capital_mode: CapitalMode,
 ) -> None:
-    if capital_mode not in (CapitalMode.ADDITIVE_PNL, CapitalMode.RETURN_BASED):
+    if capital_mode not in (
+        CapitalMode.ADDITIVE_PNL,
+        CapitalMode.RETURN_BASED,
+        CapitalMode.PATH_DEPENDENT_EQUITY,
+    ):
         raise MonteCarloConfigError(f"unsupported capital_mode: {capital_mode}")
     for index, trade in enumerate(trades):
         if not math.isfinite(trade.pnl):

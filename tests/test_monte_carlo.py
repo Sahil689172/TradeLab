@@ -543,11 +543,14 @@ def test_report_schema_sections() -> None:
     assert "capital_mode" in dumped
 
 
-def test_path_dependent_not_implemented() -> None:
-    from app.backtesting.monte_carlo import PathDependentMonteCarlo, PathDependentNotImplementedError
+def test_path_dependent_empty_trades_are_insufficient() -> None:
+    from app.backtesting.monte_carlo import PathDependentMonteCarlo
+    from app.backtesting.monte_carlo.schemas import MonteCarloVerdict
 
-    with pytest.raises(PathDependentNotImplementedError):
-        PathDependentMonteCarlo().run([])
+    result = PathDependentMonteCarlo().run([])
+    assert result.engine_kind == "PathDependentPortfolioMonteCarlo"
+    assert result.source_trade_count == 0
+    assert result.verdict is MonteCarloVerdict.INSUFFICIENT_EVIDENCE
 
 
 def test_synthetic_hundred_trades_sample_quality() -> None:

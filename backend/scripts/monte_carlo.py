@@ -6,7 +6,8 @@
 
     python backend/scripts/monte_carlo.py --trades-json logs\\trade_log.json --method shuffle --seed 42
 
-    python backend/scripts/monte_carlo.py --synthetic-trades 100 --simulations 10000 --seed 42 --benchmark
+    python backend/scripts/monte_carlo.py --trades-json tests\\fixtures\\monte_carlo_trades.json ^
+        --mode path_dependent --position-percent 10 --simulations 10000 --seed 42
 """
 
 from __future__ import annotations
@@ -25,8 +26,10 @@ from pydantic import ValidationError
 
 from app.backtesting.monte_carlo import (
     CapitalMode,
+    EngineMode,
     MonteCarloConfig,
     MonteCarloEngine,
+    MonteCarloSizingMode,
     SamplingMethod,
     format_console_report,
     load_trades_from_json,
@@ -58,6 +61,36 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Generate N deterministic synthetic completed trades (skip replay)",
     )
     parser.add_argument("--synthetic-seed", type=int, default=1)
+    parser.add_argument(
+        "--mode",
+        choices=[m.value for m in EngineMode],
+        default=EngineMode.TRADE_RESAMPLING.value,
+        help="trade_resampling (A5.6) or path_dependent (A5.7). Default: trade_resampling",
+    )
+    parser.add_argument(
+        "--position-sizing",
+        choices=[m.value for m in MonteCarloSizingMode],
+        default=MonteCarloSizingMode.PERCENT_OF_EQUITY.value,
+        help="A5.7 allocation mode (ignored by A5.6)",
+    )
+    parser.add_argument(
+        "--position-percent",
+        type=float,
+        default=10.0,
+        help="A5.7 percent of current cash per trade (percent_of_equity / fixed_fractional). "
+        "Not the same as --percent, which is A5.2 replay sizing.",
+    )
+    parser.add_argument(
+        "--fixed-cash",
+        type=float,
+        default=None,
+        help="A5.7 rupee allocation when --position-sizing fixed_cash",
+    )
+    parser.add_argument(
+        "--compare-a56",
+        action="store_true",
+        help="A5.7: also run A5.6 additive resampling on the same trades for comparison",
+    )
     parser.add_argument("--simulations", type=int, default=10_000)
     parser.add_argument(
         "--method",
@@ -66,7 +99,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--capital-mode",
-        choices=[m.value for m in CapitalMode],
+        choices=[CapitalMode.ADDITIVE_PNL.value, CapitalMode.RETURN_BASED.value],
         default=CapitalMode.ADDITIVE_PNL.value,
     )
     parser.add_argument("--block-size", type=int, default=5)
@@ -75,6 +108,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--ruin-threshold", type=float, default=0.5)
     parser.add_argument("--slippage-bps", type=float, default=5.0)
     parser.add_argument("--brokerage-rate", type=float, default=0.0003)
+    parser.add_argument(
+        "--brokerage-flat",
+        type=float,
+        default=0.0,
+        help="Flat brokerage per fill (A5.2 / A5.7). Default 0",
+    )
     parser.add_argument("--percent", type=float, default=95.0)
     parser.add_argument(
         "--cost-sensitivity",
@@ -161,6 +200,13 @@ def main(argv: list[str] | None = None) -> int:
             include_cost_perturbation=bool(args.cost_sensitivity),
             base_slippage_bps=float(args.slippage_bps),
             ruin_threshold=float(args.ruin_threshold),
+            engine_mode=EngineMode(args.mode),
+            sizing_mode=MonteCarloSizingMode(args.position_sizing),
+            position_percent=float(args.position_percent),
+            fixed_cash_amount=float(args.fixed_cash) if args.fixed_cash is not None else None,
+            brokerage_rate=float(args.brokerage_rate),
+            brokerage_flat=float(args.brokerage_flat),
+            compare_engines=bool(args.compare_a56),
         )
     except (ValidationError, ValueError) as exc:
         print(f"Invalid Monte Carlo configuration: {exc}", file=sys.stderr)

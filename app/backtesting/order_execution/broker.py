@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from app.backtesting.order_execution.costs import (
+    brokerage_charge,
+    execution_price,
+    quantity_from_budget,
+)
 from app.backtesting.order_execution.exceptions import (
     OrderConfigurationError,
     OrderRejectedError,
@@ -141,17 +146,27 @@ class SimulatedBroker:
                 reason_code=RejectionReason.INVALID_RECOMMENDATION,
             )
 
-        exec_price = self._execution_price(OrderSide.BUY, reference_price)
+        exec_price = execution_price(OrderSide.BUY, reference_price, self._config.slippage_bps)
         mode = self._config.position_sizing
 
         if mode is PositionSizingMode.FIXED_QUANTITY:
             qty = float(self._config.quantity or 0.0)
         elif mode is PositionSizingMode.FIXED_AMOUNT:
             budget = min(float(self._config.amount or 0.0), self._cash)
-            qty = self._quantity_from_budget(budget, exec_price)
+            qty = quantity_from_budget(
+                budget,
+                exec_price,
+                self._config.brokerage_rate,
+                self._config.brokerage_flat,
+            )
         else:
             budget = self._cash * self._config.position_size_pct
-            qty = self._quantity_from_budget(budget, exec_price)
+            qty = quantity_from_budget(
+                budget,
+                exec_price,
+                self._config.brokerage_rate,
+                self._config.brokerage_flat,
+            )
 
         if not self._config.allow_fractional_shares:
             qty = float(int(qty))
@@ -187,12 +202,12 @@ class SimulatedBroker:
             )
 
     def _quantity_from_budget(self, budget: float, exec_price: float) -> float:
-        if budget <= 0 or exec_price <= 0:
-            return 0.0
-        effective = budget / (1.0 + self._config.brokerage_rate) - self._config.brokerage_flat
-        if effective <= 0:
-            return 0.0
-        return effective / exec_price
+        return quantity_from_budget(
+            budget,
+            exec_price,
+            self._config.brokerage_rate,
+            self._config.brokerage_flat,
+        )
 
     def _fill_buy(
         self,
@@ -208,10 +223,10 @@ class SimulatedBroker:
                 reason_code=RejectionReason.ALREADY_HOLDING,
             )
 
-        exec_price = self._execution_price(OrderSide.BUY, order.reference_price)
+        exec_price = execution_price(OrderSide.BUY, order.reference_price, self._config.slippage_bps)
         slippage_per_unit = exec_price - order.reference_price
         notional = exec_price * order.quantity
-        brokerage = self._brokerage(notional)
+        brokerage = brokerage_charge(notional, self._config.brokerage_rate, self._config.brokerage_flat)
         total_cost = notional + brokerage
         if total_cost > self._cash + 1e-9:
             raise OrderRejectedError(
@@ -285,10 +300,10 @@ class SimulatedBroker:
             )
 
         qty = position.quantity
-        exec_price = self._execution_price(OrderSide.SELL, order.reference_price)
+        exec_price = execution_price(OrderSide.SELL, order.reference_price, self._config.slippage_bps)
         slippage_per_unit = order.reference_price - exec_price
         notional = exec_price * qty
-        brokerage = self._brokerage(notional)
+        brokerage = brokerage_charge(notional, self._config.brokerage_rate, self._config.brokerage_flat)
         proceeds = notional - brokerage
         slippage_cost = abs(slippage_per_unit) * qty
 
@@ -369,13 +384,10 @@ class SimulatedBroker:
         return ExitReason.SELL_RECOMMENDATION
 
     def _execution_price(self, side: OrderSide, reference: float) -> float:
-        slip = reference * (self._config.slippage_bps / 10_000.0)
-        if side is OrderSide.BUY:
-            return reference + slip
-        return max(reference - slip, 1e-12)
+        return execution_price(side, reference, self._config.slippage_bps)
 
     def _brokerage(self, notional: float) -> float:
-        return abs(notional) * self._config.brokerage_rate + self._config.brokerage_flat
+        return brokerage_charge(notional, self._config.brokerage_rate, self._config.brokerage_flat)
 
     def _positions_market_value(self) -> float:
         total = 0.0
