@@ -1,0 +1,62 @@
+[
+  {
+    "symbol": "RELIANCE",
+    "strategy_name": "ema_trend",
+    "entry_timestamp": "2022-01-03T00:00:00+00:00",
+    "exit_timestamp": "2022-01-20T00:00:00+00:00",
+    "entry_price": 100.0,
+    "exit_price": 110.0,
+    "quantity": 10.0,
+    "gross_profit": 100.0,
+    "brokerage": 0.0,
+    "slippage": 0.0,
+    "net_profit": 100.0,
+    "holding_days": 17,
+    "exit_reason": "SELL Recommendation"
+  },
+  {
+    "symbol": "TCS",
+    "strategy_name": "ema_trend",
+    "entry_timestamp": "2022-01-03T00:00:00+00:00",
+    "exit_timestamp": "2022-01-18T00:00:00+00:00",
+    "entry_price": 100.0,
+    "exit_price": 108.0,
+    "quantity": 10.0,
+    "gross_profit": 80.0,
+    "brokerage": 0.0,
+    "slippage": 0.0,
+    "net_profit": 80.0,
+    "holding_days": 15,
+    "exit_reason": "SELL Recommendation"
+  },
+  {
+    "symbol": "INFY",
+    "strategy_name": "vwap",
+    "entry_timestamp": "2022-02-01T00:00:00+00:00",
+    "exit_timestamp": "2022-02-15T00:00:00+00:00",
+    "entry_price": 100.0,
+    "exit_price": 95.0,
+    "quantity": 10.0,
+    "gross_profit": -50.0,
+    "brokerage": 0.0,
+    "slippage": 0.0,
+    "net_profit": -50.0,
+    "holding_days": 14,
+    "exit_reason": "Stop Loss"
+  },
+  {
+    "symbol": "SBIN",
+    "strategy_name": "supertrend",
+    "entry_timestamp": "2022-02-10T00:00:00+00:00",
+    "exit_timestamp": "2022-03-01T00:00:00+00:00",
+    "entry_price": 100.0,
+    "exit_price": 104.0,
+    "quantity": 10.0,
+    "gross_profit": 40.0,
+    "brokerage": 0.0,
+    "slippage": 0.0,
+    "net_profit": 40.0,
+    "holding_days": 19,
+    "exit_reason": "SELL Recommendation"
+  }
+]

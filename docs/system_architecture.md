@@ -138,7 +138,13 @@ This preserves: **business logic independent of routes**, **ML independent of Fa
 A5.7 resamples historical trade prices and reallocates capital from current cash
 using A5.2 sizing and costs. Neither replays candles through the strategy.
 
-See [`docs/monte_carlo.md`](monte_carlo.md).
+**A5.8:** portfolio-level risk lives in `app/backtesting/portfolio_risk/`.
+It overlays completed A5.2 trades on a shared cash book (allocation, exposure,
+concentration, correlation, drawdown, optional Monte Carlo). Independent
+per-symbol backtest quantities are re-sized; they are not treated as a live
+portfolio. A5.6 / A5.7 numerical cores are unchanged.
+
+See [`docs/monte_carlo.md`](monte_carlo.md) and `app/backtesting/portfolio_risk/README.md`.
 
 ### 3.7 Strategy Subsystem
 

@@ -231,3 +231,15 @@ observations.
   lots. Full market-path Monte Carlo remains out of scope.
 - Sample-quality and verdict gates are the same as A5.6: simulation count never
   increases historical sample size.
+
+## A5.8 portfolio-level risk
+
+A5.8 (`app/backtesting/portfolio_risk/`) overlays completed trades on a **shared
+cash book**. It re-sizes entries from current cash, enforces configurable
+exposure/concentration limits, and optionally resamples the trade set with the
+A5.6 sampler. It does not concatenate independent A5.7 runs.
+
+```bat
+.venv\Scripts\python.exe backend\scripts\portfolio_risk.py --trades-json tests\fixtures\portfolio_risk_trades.json --initial-capital 100000 --max-exposure 80 --max-position-percent 20 --simulations 200 --seed 42 --output backend\data\portfolio_risk\example
+```
+
