@@ -243,3 +243,11 @@ A5.6 sampler. It does not concatenate independent A5.7 runs.
 .venv\Scripts\python.exe backend\scripts\portfolio_risk.py --trades-json tests\fixtures\portfolio_risk_trades.json --initial-capital 100000 --max-exposure 80 --max-position-percent 20 --simulations 200 --seed 42 --output backend\data\portfolio_risk\example
 ```
 
+## A5.9 walk-forward / out-of-sample Monte Carlo
+
+A5.9 may run A5.6 on **combined out-of-sample trades only**, after every
+train→freeze→test window. That path is labeled **OUT-OF-SAMPLE MONTE CARLO**.
+It must not resample TRAIN+TEST together. Simulations still do not create new
+independent historical observations. See
+[`docs/walk_forward_validation.md`](walk_forward_validation.md).
+

@@ -146,6 +146,13 @@ portfolio. A5.6 / A5.7 numerical cores are unchanged.
 
 See [`docs/monte_carlo.md`](monte_carlo.md) and `app/backtesting/portfolio_risk/README.md`.
 
+**A5.9:** walk-forward / out-of-sample validation lives in
+`app/backtesting/walk_forward/`. It is an orchestration layer: declared
+parameter search on each training window, frozen A5.1+A5.2 evaluation on the
+following test window, concatenated **test-only** OOS results, then optional
+A5.8 and **OUT-OF-SAMPLE** Monte Carlo on those OOS trades. It does not
+replace A5.1–A5.8. See [`docs/walk_forward_validation.md`](walk_forward_validation.md).
+
 ### 3.7 Strategy Subsystem
 
 **Responsibilities**
