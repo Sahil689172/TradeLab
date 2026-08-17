@@ -92,6 +92,15 @@ PERCENTILE_METHOD = (
     "not a statistical confidence interval"
 )
 
+VAR_CVAR_DEFINITION = (
+    "VaR(c) is the loss at the (1-c) lower tail of the simulated return "
+    "distribution, reported as a positive loss fraction (a negative value means "
+    "even the tail outcome was a gain). CVaR/Expected Shortfall(c) is the mean loss "
+    "of outcomes at or beyond VaR(c). Both are empirical Monte Carlo tail estimates "
+    "from resampled historical trades — not parametric VaR and not a guarantee of "
+    "maximum loss. Capital figures scale the return-based estimate by initial capital."
+)
+
 
 class MonteCarloConfig(BaseModel):
     """Knobs for a Monte Carlo run. Sampling never mutates source trades."""
@@ -256,6 +265,28 @@ class RobustnessAssessment(BaseModel):
     reasons: list[str] = Field(default_factory=list)
 
 
+class RiskMetrics(BaseModel):
+    """A6 tail-risk estimates from the simulated return distribution.
+
+    All ``*_return`` figures are loss fractions where positive means loss.
+    ``*_capital`` figures are the same estimate scaled by initial capital (rupees).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    confidence_levels: tuple[float, ...] = (0.95, 0.99)
+    var_return_95: float = 0.0
+    var_return_99: float = 0.0
+    cvar_return_95: float = 0.0
+    cvar_return_99: float = 0.0
+    var_capital_95: float = 0.0
+    var_capital_99: float = 0.0
+    cvar_capital_95: float = 0.0
+    cvar_capital_99: float = 0.0
+    definition: str = VAR_CVAR_DEFINITION
+    methodology: str = "empirical_monte_carlo_return_tail"
+
+
 class HistoricalSnapshot(BaseModel):
     """Original-sequence stats (not a Monte Carlo forecast)."""
 
@@ -312,3 +343,4 @@ class MonteCarloResult(BaseModel):
     position_sizing_mode: str | None = None
     position_size_parameters: dict[str, float] = Field(default_factory=dict)
     execution_cost_parameters: dict[str, float] = Field(default_factory=dict)
+    risk_metrics: RiskMetrics | None = None

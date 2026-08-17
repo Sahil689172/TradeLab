@@ -57,6 +57,18 @@ def _csv(result: MonteCarloResult) -> str:
     ]
     for key, value in result.threshold_probabilities.items():
         lines.append(f"{key},{value}")
+    rm = result.risk_metrics
+    if rm is not None:
+        lines.extend(
+            [
+                "",
+                "tail_risk,confidence,return_loss_fraction,capital_loss",
+                f"VaR,0.95,{rm.var_return_95},{rm.var_capital_95}",
+                f"CVaR,0.95,{rm.cvar_return_95},{rm.cvar_capital_95}",
+                f"VaR,0.99,{rm.var_return_99},{rm.var_capital_99}",
+                f"CVaR,0.99,{rm.cvar_return_99},{rm.cvar_capital_99}",
+            ]
+        )
     return "\n".join(lines) + "\n"
 
 

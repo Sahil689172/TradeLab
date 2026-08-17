@@ -29,6 +29,7 @@ from app.backtesting.monte_carlo.pipeline import (
     make_synthetic_trades,
 )
 from app.backtesting.monte_carlo.report import format_console_report, format_markdown_report
+from app.backtesting.monte_carlo.risk_metrics import compute_risk_metrics
 from app.backtesting.monte_carlo.schemas import (
     CapitalMode,
     EngineMode,
@@ -37,6 +38,7 @@ from app.backtesting.monte_carlo.schemas import (
     MonteCarloTrade,
     MonteCarloVerdict,
     MonteCarloSizingMode,
+    RiskMetrics,
     RobustnessBand,
     SampleQuality,
     SamplingMethod,
@@ -57,10 +59,12 @@ __all__ = [
     "PathDependentMonteCarlo",
     "PathDependentPortfolioMonteCarlo",
     "PathDependentNotImplementedError",
+    "RiskMetrics",
     "RobustnessBand",
     "SampleQuality",
     "SamplingMethod",
     "TradeResamplingMonteCarlo",
+    "compute_risk_metrics",
     "format_console_report",
     "format_markdown_report",
     "load_trades_from_json",

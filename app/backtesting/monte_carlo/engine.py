@@ -43,11 +43,13 @@ from app.backtesting.monte_carlo.schemas import (
     MonteCarloTrade,
     MonteCarloVerdict,
     PercentileSummary,
+    RiskMetrics,
     RobustnessAssessment,
     SampleQuality,
     SamplingMethod,
     SimulationSummary,
 )
+from app.backtesting.monte_carlo.risk_metrics import compute_risk_metrics
 from app.backtesting.monte_carlo.simulation import (
     simulate_equity,
     simulate_equity_batch,
@@ -176,6 +178,10 @@ class TradeResamplingMonteCarlo:
         p_profit = float(np.mean(batch["final"] > config.initial_capital))
         p_ruin = float(np.mean(batch["min_eq"] < config.ruin_equity))
         thresholds = _threshold_probs(batch, config)
+        risk_metrics = compute_risk_metrics(
+            batch["ret"],
+            initial_capital=config.initial_capital,
+        )
 
         summaries: list[SimulationSummary] | None = None
         if config.store_simulation_summaries:
@@ -256,6 +262,7 @@ class TradeResamplingMonteCarlo:
             symbol=symbol,
             period=period,
             summaries=summaries,
+            risk_metrics=risk_metrics,
         )
 
     def _simulate_batch(
@@ -535,6 +542,7 @@ def _result(
     symbol: str,
     period: str,
     summaries: list[SimulationSummary] | None,
+    risk_metrics: RiskMetrics | None = None,
 ) -> MonteCarloResult:
     block_size = (
         config.block_size
@@ -578,6 +586,7 @@ def _result(
         symbol=symbol,
         period=period,
         simulation_summaries=summaries,
+        risk_metrics=risk_metrics,
     )
 
 

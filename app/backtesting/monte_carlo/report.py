@@ -118,6 +118,21 @@ def format_markdown_report(result: MonteCarloResult) -> str:
     )
     for key, value in result.threshold_probabilities.items():
         lines.append(f"  {key}: {_pct(value)}")
+    rm = result.risk_metrics
+    if rm is not None:
+        lines.extend(
+            [
+                "",
+                "TAIL RISK (VaR / CVaR)",
+                "----------------------",
+                "Positive = loss. Empirical Monte Carlo tail of the simulated return "
+                "distribution (not parametric VaR, not a maximum-loss guarantee).",
+                f"VaR 95%: {_pct(rm.var_return_95)}  (₹{rm.var_capital_95:,.2f})",
+                f"CVaR/ES 95%: {_pct(rm.cvar_return_95)}  (₹{rm.cvar_capital_95:,.2f})",
+                f"VaR 99%: {_pct(rm.var_return_99)}  (₹{rm.var_capital_99:,.2f})",
+                f"CVaR/ES 99%: {_pct(rm.cvar_return_99)}  (₹{rm.cvar_capital_99:,.2f})",
+            ]
+        )
     lines.extend(["", "COST SENSITIVITY", "----------------"])
     if result.cost_sensitivity:
         for row in result.cost_sensitivity:

@@ -83,6 +83,23 @@ distribution, risk, sample quality, and a sample-capped **verdict**
 Percentiles are **Monte Carlo percentile intervals** (`numpy.percentile`,
 `method='linear'`), not statistical confidence intervals.
 
+### Tail risk — VaR / CVaR (A6)
+
+Every non-empty result carries a `risk_metrics` block with empirical
+**Value at Risk** and **Conditional VaR / Expected Shortfall** at the 95% and
+99% confidence levels, computed from the simulated return distribution:
+
+```text
+VaR(c)  = -percentile(returns, 1 - c)            # positive = loss fraction
+CVaR(c) = -mean(returns <= percentile(returns, 1 - c))
+```
+
+`*_return_*` fields are loss fractions (positive means loss; negative means even
+the tail was a gain); `*_capital_*` fields scale by initial capital. These are
+empirical Monte Carlo tail estimates from resampled historical trades — **not**
+parametric VaR and **not** a maximum-loss guarantee. The simulation count never
+increases the historical sample size that caps the verdict.
+
 ## CLI
 
 ```bat

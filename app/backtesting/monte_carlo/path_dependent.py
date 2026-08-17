@@ -29,6 +29,7 @@ from app.backtesting.monte_carlo.portfolio import (
     simulate_portfolio_batch,
     summary_from_portfolio_batch,
 )
+from app.backtesting.monte_carlo.risk_metrics import compute_risk_metrics
 from app.backtesting.monte_carlo.robustness import (
     assess_robustness,
     assess_verdict,
@@ -393,6 +394,10 @@ class PathDependentMonteCarlo:
                 p95_losing_streak=_percentiles(batch["lose_streak"].astype(float)).p95,
                 cost_rows=cost_rows,
             )
+        risk_metrics = compute_risk_metrics(
+            batch["ret"],
+            initial_capital=config.initial_capital,
+        )
         result = _result(
             config=config,
             capital_mode=CapitalMode.PATH_DEPENDENT_EQUITY,
@@ -419,6 +424,7 @@ class PathDependentMonteCarlo:
             symbol=symbol,
             period=period,
             summaries=summaries,
+            risk_metrics=risk_metrics,
         )
         if comparison is not None:
             comparison = comparison.model_copy(
