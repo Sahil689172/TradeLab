@@ -51,8 +51,7 @@ class DegradationLabel(str, Enum):
 
 class SelectionEligibility(str, Enum):
     ELIGIBLE = "ELIGIBLE"
-    INELIGIBLE_INSUFFICIENT_TRAIN_SAMPLE = "INELIGIBLE_INSUFFICIENT_TRAIN_SAMPLE"
-    FALLBACK_ALL_INELIGIBLE = "FALLBACK_ALL_INELIGIBLE"
+    FALLBACK_INELIGIBLE = "FALLBACK_INELIGIBLE"
 
 
 class TrainSelectionDiagnostic(BaseModel):
@@ -63,6 +62,8 @@ class TrainSelectionDiagnostic(BaseModel):
     eligible_count: int = 0
     ineligible_count: int = 0
     zero_trade_candidates: int = 0
+    selected_training_trade_count: int = 0
+    fallback_count: int = 0
     selected_eligibility: SelectionEligibility = SelectionEligibility.ELIGIBLE
     note: str = ""
 

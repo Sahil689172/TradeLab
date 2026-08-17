@@ -36,22 +36,25 @@ def _pick_candidate(
             f"{len(eligible)}/{evaluated} candidate(s) met "
             f"minimum_training_trades>={minimum_training_trades}."
         )
+        fallback_count = 0
     else:
-        eligibility = SelectionEligibility.FALLBACK_ALL_INELIGIBLE
+        eligibility = SelectionEligibility.FALLBACK_INELIGIBLE
+        fallback_count = ineligible
         note = (
             f"No candidate met minimum_training_trades>={minimum_training_trades}; "
-            "selected best score among all candidates (diagnostic only)."
+            f"selected best score among {evaluated} ineligible candidate(s) "
+            "(diagnostic only — minimum NOT satisfied)."
         )
     pool = sorted(pool)
     _neg, _key, chosen, metrics, used_max = pool[0]
-    if not eligible and metrics.trade_count < minimum_training_trades:
-        eligibility = SelectionEligibility.INELIGIBLE_INSUFFICIENT_TRAIN_SAMPLE
     diagnostic = TrainSelectionDiagnostic(
         minimum_training_trades=minimum_training_trades,
         candidates_evaluated=evaluated,
         eligible_count=len(eligible),
         ineligible_count=ineligible,
         zero_trade_candidates=zero_trade,
+        selected_training_trade_count=metrics.trade_count,
+        fallback_count=fallback_count,
         selected_eligibility=eligibility,
         note=note,
     )
@@ -137,14 +140,26 @@ def select_on_train(
             initial_capital=initial_capital,
             **runner_kwargs,
         )
+        meets = period.metrics.trade_count >= wf_config.minimum_training_trades
         diagnostic = TrainSelectionDiagnostic(
             minimum_training_trades=wf_config.minimum_training_trades,
             candidates_evaluated=1,
-            eligible_count=1 if period.metrics.trade_count >= wf_config.minimum_training_trades else 0,
-            ineligible_count=0 if period.metrics.trade_count >= wf_config.minimum_training_trades else 1,
+            eligible_count=1 if meets else 0,
+            ineligible_count=0 if meets else 1,
             zero_trade_candidates=1 if period.metrics.trade_count == 0 else 0,
-            selected_eligibility=SelectionEligibility.ELIGIBLE,
-            note="fallback single candidate",
+            selected_training_trade_count=period.metrics.trade_count,
+            fallback_count=0 if meets else 1,
+            selected_eligibility=(
+                SelectionEligibility.ELIGIBLE if meets else SelectionEligibility.FALLBACK_INELIGIBLE
+            ),
+            note=(
+                "fallback single candidate"
+                if meets
+                else (
+                    f"No candidate met minimum_training_trades>={wf_config.minimum_training_trades}; "
+                    "fallback single candidate selected (diagnostic only — minimum NOT satisfied)."
+                )
+            ),
         )
         return fallback, period.metrics, 1, period.used_max, diagnostic
     chosen, metrics, used_max, diagnostic = _pick_candidate(

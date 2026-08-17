@@ -49,6 +49,35 @@ def format_markdown_report(result: WalkForwardResult) -> str:
     lines.extend(
         [
             "",
+            "TRAIN SELECTION ELIGIBILITY",
+            "---------------------------",
+            f"Minimum training trades: {cfg.minimum_training_trades}",
+            "",
+            "Window | Symbol | Status | Selected train trades | Required | Eligible | Ineligible",
+            "------ | ------ | ------ | --------------------- | -------- | -------- | ----------",
+        ],
+    )
+    for row in result.windows:
+        sel = row.train_selection
+        if sel is None:
+            lines.append(
+                f"{row.window.window_id} | {row.symbol} | (n/a) | {row.train.trade_count} | "
+                f"{cfg.minimum_training_trades} | n/a | n/a",
+            )
+            continue
+        status = sel.selected_eligibility.value
+        lines.append(
+            f"{row.window.window_id} | {row.symbol} | {status} | "
+            f"{sel.selected_training_trade_count} | {sel.minimum_training_trades} | "
+            f"{sel.eligible_count} | {sel.ineligible_count}",
+        )
+        if sel.selected_eligibility.value == "FALLBACK_INELIGIBLE":
+            lines.append(
+                f"  WARNING window {row.window.window_id}: {sel.note}",
+            )
+    lines.extend(
+        [
+            "",
             "ACCOUNTING",
             "----------",
             f"Model: {result.accounting_model}",

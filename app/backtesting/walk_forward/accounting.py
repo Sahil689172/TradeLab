@@ -90,9 +90,24 @@ def assert_ledger_invariant(
 
 def assert_costs_not_double_counted(trades: Sequence[ClosedTradeRecord], tolerance: float = 1e-4) -> None:
     for trade in trades:
-        recomputed = float(trade.gross_profit) - float(trade.brokerage) - float(trade.slippage)
-        if abs(recomputed - float(trade.net_profit)) > tolerance:
-            raise AssertionError(
-                f"net_profit mismatch on {trade.symbol}: "
-                f"gross-brokerage-slippage={recomputed}, net_profit={trade.net_profit}",
-            )
+        assert_trade_ledger_identity(trade, tolerance=tolerance)
+
+
+def assert_trade_ledger_identity(
+    trade: ClosedTradeRecord,
+    *,
+    tolerance: float = DEFAULT_ACCOUNTING_TOLERANCE,
+) -> None:
+    """Verify gross at execution prices and net deducts brokerage/slippage exactly once."""
+    gross_at_exec = (float(trade.exit_price) - float(trade.entry_price)) * float(trade.quantity)
+    if abs(gross_at_exec - float(trade.gross_profit)) > tolerance:
+        raise AssertionError(
+            f"gross_profit mismatch on {trade.symbol}: "
+            f"(exit-entry)*qty={gross_at_exec}, gross_profit={trade.gross_profit}",
+        )
+    recomputed = float(trade.gross_profit) - float(trade.brokerage) - float(trade.slippage)
+    if abs(recomputed - float(trade.net_profit)) > tolerance:
+        raise AssertionError(
+            f"net_profit mismatch on {trade.symbol}: "
+            f"gross-brokerage-slippage={recomputed}, net_profit={trade.net_profit}",
+        )

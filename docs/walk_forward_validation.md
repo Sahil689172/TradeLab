@@ -149,8 +149,10 @@ execution prices while `net_profit` also deducts slippage explicitly.
 (`canonical_equity_step_returns`), not an average of per-window Sharpes.
 
 **Training selection:** `minimum_training_trades` (default 5) marks candidates
-with fewer TRAIN trades as `INELIGIBLE_INSUFFICIENT_TRAIN_SAMPLE`. If none
-qualify, the best score is chosen with `FALLBACK_ALL_INELIGIBLE` (diagnostic).
+with fewer TRAIN trades as ineligible. If none qualify, the best score is
+chosen with `FALLBACK_INELIGIBLE` (diagnostic — minimum NOT satisfied).
+Each window records `selected_training_trade_count`, `eligible_count`, and
+`fallback_count`.
 
 ## Sample-aware statistics
 

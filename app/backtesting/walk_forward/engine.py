@@ -49,6 +49,7 @@ from app.backtesting.walk_forward.schemas import (
     CapitalMode,
     EquityPoint,
     ExecutionAttribution,
+    SelectionEligibility,
     SelectionScope,
     StrategyIdentity,
     WalkForwardConfig,
@@ -309,6 +310,19 @@ class WalkForwardEngine:
         if not windows:
             warnings.append("No complete train/test windows fit the configured data range.")
             verdict = MonteCarloVerdict.INSUFFICIENT_EVIDENCE
+        fallback_windows = [
+            row
+            for row in window_results
+            if row.train_selection is not None
+            and row.train_selection.selected_eligibility is SelectionEligibility.FALLBACK_INELIGIBLE
+        ]
+        if fallback_windows:
+            warnings.append(
+                f"TRAIN_SELECTION_FALLBACK: {len(fallback_windows)}/{len(window_results)} window(s) "
+                f"selected a candidate below minimum_training_trades="
+                f"{self._config.minimum_training_trades}. "
+                "Minimum was NOT satisfied; train selection is diagnostic only."
+            )
 
         gross = float(perf.gross_profit)
         costs = float(perf.total_costs)

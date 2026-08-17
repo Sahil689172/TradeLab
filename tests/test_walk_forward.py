@@ -187,6 +187,34 @@ def _metrics(
     )
 
 
+def _ledger_trade(
+    symbol: str,
+    entry: datetime,
+    *,
+    gross_profit: float,
+    brokerage: float,
+    slippage: float,
+    entry_price: float = 100.0,
+    quantity: float = 1.0,
+) -> ClosedTradeRecord:
+    net_profit = gross_profit - brokerage - slippage
+    return ClosedTradeRecord(
+        symbol=symbol,
+        entry_timestamp=entry,
+        exit_timestamp=entry + timedelta(days=2),
+        entry_price=entry_price,
+        exit_price=entry_price + gross_profit / quantity,
+        quantity=quantity,
+        gross_profit=gross_profit,
+        brokerage=brokerage,
+        slippage=slippage,
+        net_profit=net_profit,
+        holding_days=2,
+        exit_reason=ExitReason.SELL_RECOMMENDATION,
+        strategy_name="ema_professional",
+    )
+
+
 def _closed(symbol: str, entry: datetime, pnl: float, price: float = 100.0) -> ClosedTradeRecord:
     return ClosedTradeRecord(
         symbol=symbol,
@@ -223,6 +251,8 @@ def _train_diagnostic(**kwargs: object) -> TrainSelectionDiagnostic:
         eligible_count=2,
         ineligible_count=0,
         zero_trade_candidates=0,
+        selected_training_trade_count=5,
+        fallback_count=0,
         selected_eligibility=SelectionEligibility.ELIGIBLE,
         note="test stub",
     )
@@ -966,19 +996,28 @@ def test_ledger_final_equity_equals_initial_plus_net_profit() -> None:
     from app.backtesting.walk_forward.equity import canonical_equity_series
 
     trades = [
-        _closed("RELIANCE", datetime(2022, 11, 4, tzinfo=timezone.utc), -2947.475357),
-        _closed("RELIANCE", datetime(2024, 3, 26, tzinfo=timezone.utc), -1084.586279),
-        _closed("RELIANCE", datetime(2024, 4, 26, tzinfo=timezone.utc), -2691.866123),
+        _ledger_trade(
+            "RELIANCE",
+            datetime(2022, 11, 4, tzinfo=timezone.utc),
+            gross_profit=-2798.394738,
+            brokerage=55.905486,
+            slippage=93.175133,
+        ),
+        _ledger_trade(
+            "RELIANCE",
+            datetime(2024, 3, 26, tzinfo=timezone.utc),
+            gross_profit=-938.597513,
+            brokerage=54.745867,
+            slippage=91.242899,
+        ),
+        _ledger_trade(
+            "RELIANCE",
+            datetime(2024, 4, 26, tzinfo=timezone.utc),
+            gross_profit=-2548.130233,
+            brokerage=53.901189,
+            slippage=89.834701,
+        ),
     ]
-    trades[0] = trades[0].model_copy(
-        update={"gross_profit": -2798.394738, "brokerage": 55.905486, "slippage": 93.175133},
-    )
-    trades[1] = trades[1].model_copy(
-        update={"gross_profit": -938.597513, "brokerage": 54.745867, "slippage": 91.242899},
-    )
-    trades[2] = trades[2].model_copy(
-        update={"gross_profit": -2548.130233, "brokerage": 53.901189, "slippage": 89.834701},
-    )
     initial = 100_000.0
     assert_costs_not_double_counted(trades)
     expected = ledger_final_equity(initial, trades)
@@ -1045,7 +1084,160 @@ def test_minimum_training_trades_filter_uses_train_only() -> None:
     )
     assert diagnostic.minimum_training_trades == 5
     assert diagnostic.candidates_evaluated >= 1
-    assert diagnostic.eligible_count == 0 or metrics.trade_count >= 5
+    assert diagnostic.selected_training_trade_count == metrics.trade_count
+    if diagnostic.eligible_count == 0:
+        assert diagnostic.selected_eligibility is SelectionEligibility.FALLBACK_INELIGIBLE
+        assert metrics.trade_count < 5
+        assert diagnostic.fallback_count == diagnostic.ineligible_count
+        assert "NOT satisfied" in diagnostic.note
+    else:
+        assert diagnostic.selected_eligibility is SelectionEligibility.ELIGIBLE
+        assert metrics.trade_count >= 5
+
+
+def test_training_fallback_never_implies_minimum_satisfied() -> None:
+    market, features, frames = _ports(40)
+    train_end = frames["RELIANCE"]["date"].iloc[18].date()
+    cfg = _cfg(
+        search=_search(ema_pair_presets=("9_21", "12_26")),
+        minimum_training_trades=5,
+    )
+    _chosen, metrics, _n, _used, diagnostic = select_on_train(
+        symbol="RELIANCE",
+        wf_config=cfg,
+        train_start=frames["RELIANCE"]["date"].iloc[0].date(),
+        train_end=train_end,
+        market_data=market,
+        features=features,
+        initial_capital=100_000.0,
+    )
+    if diagnostic.selected_eligibility is SelectionEligibility.FALLBACK_INELIGIBLE:
+        assert diagnostic.eligible_count == 0
+        assert diagnostic.selected_training_trade_count == metrics.trade_count
+        assert metrics.trade_count < diagnostic.minimum_training_trades
+        assert diagnostic.fallback_count > 0
+
+
+def test_oos_data_cannot_change_train_eligibility() -> None:
+    market_a, features_a, frames = _ports(40)
+    train_start = frames["RELIANCE"]["date"].iloc[0].date()
+    train_end = frames["RELIANCE"]["date"].iloc[18].date()
+    test_end = frames["RELIANCE"]["date"].iloc[-1].date()
+    poisoned = frames["RELIANCE"].copy()
+    after_train = pd.to_datetime(poisoned["date"]).dt.date > train_end
+    poisoned.loc[after_train, "close"] = poisoned.loc[after_train, "close"] * 50.0
+    market_b = _StaticMarket({"RELIANCE": poisoned})
+    features_b = _StaticFeatures({"RELIANCE": _features(poisoned)})
+    cfg = _cfg(
+        search=_search(ema_pair_presets=("9_21", "12_26")),
+        minimum_training_trades=5,
+        data_start=train_start,
+        data_end=test_end,
+    )
+    result_a = WalkForwardEngine(cfg).run(
+        symbols=["RELIANCE"],
+        market_data=market_a,
+        features=features_a,
+    )
+    result_b = WalkForwardEngine(cfg).run(
+        symbols=["RELIANCE"],
+        market_data=market_b,
+        features=features_b,
+    )
+    for row_a, row_b in zip(result_a.windows, result_b.windows, strict=True):
+        sel_a = row_a.train_selection
+        sel_b = row_b.train_selection
+        assert sel_a is not None and sel_b is not None
+        assert sel_a.selected_eligibility == sel_b.selected_eligibility
+        assert sel_a.selected_training_trade_count == sel_b.selected_training_trade_count
+        assert sel_a.eligible_count == sel_b.eligible_count
+        assert row_a.selected.config_key == row_b.selected.config_key
+    assert result_a.leakage.passed
+    assert result_b.leakage.passed
+    assert result_a.leakage.train_selection_ignores_test
+    assert result_b.leakage.train_selection_ignores_test
+
+
+def test_slippage_and_brokerage_counted_once_on_execution_path() -> None:
+    from app.backtesting.walk_forward.accounting import (
+        assert_costs_not_double_counted,
+        assert_trade_ledger_identity,
+        broker_equivalent_from_ledger,
+        ledger_final_equity,
+        sum_brokerage,
+        sum_slippage,
+    )
+
+    market, features, _ = _ports(25, price=100.0)
+    start, end = _frame_span(features)
+    slippage_bps = 10.0
+    brokerage_rate = 0.001
+    cfg = _cfg(
+        slippage_bps=slippage_bps,
+        brokerage_rate=brokerage_rate,
+        data_start=start,
+        data_end=end,
+    )
+    period = run_period(
+        symbol="RELIANCE",
+        strategy_config=_frozen(),
+        wf_config=cfg,
+        start=start,
+        end=end,
+        market_data=market,
+        features=features,
+        initial_capital=100_000.0,
+        evaluator=_PulseEvaluator(),
+    )
+    assert period.trades
+    trade = period.trades[0]
+    assert_trade_ledger_identity(trade)
+    assert_costs_not_double_counted(period.trades)
+    assert trade.brokerage > 0.0
+    assert trade.slippage > 0.0
+    ref_entry = float(trade.entry_price) / (1.0 + slippage_bps / 10_000.0)
+    assert trade.entry_price == pytest.approx(
+        execution_price(OrderSide.BUY, ref_entry, slippage_bps),
+        rel=0,
+        abs=1e-9,
+    )
+    assert trade.brokerage == pytest.approx(sum_brokerage(period.trades), rel=0, abs=1e-9)
+    assert trade.slippage == pytest.approx(sum_slippage(period.trades), rel=0, abs=1e-9)
+    expected_final = ledger_final_equity(100_000.0, period.trades)
+    assert float(period.equity.iloc[-1]) == pytest.approx(expected_final, rel=0, abs=1e-6)
+    assert expected_final == pytest.approx(
+        100_000.0 + sum(float(t.net_profit) for t in period.trades),
+        rel=0,
+        abs=1e-6,
+    )
+    broker_equiv = broker_equivalent_from_ledger(period.trades, 100_000.0)
+    assert broker_equiv - expected_final == pytest.approx(sum_slippage(period.trades), rel=0, abs=1e-3)
+
+
+def test_train_selection_fallback_warning_in_report() -> None:
+    market, features, frames = _ports(40)
+    start = frames["RELIANCE"]["date"].min().date()
+    end = frames["RELIANCE"]["date"].max().date()
+    result = WalkForwardEngine(
+        _cfg(
+            data_start=start,
+            data_end=end,
+            minimum_training_trades=5,
+            search=_search(ema_pair_presets=("9_21", "12_26")),
+        ),
+    ).run(symbols=["RELIANCE"], market_data=market, features=features)
+    md = format_markdown_report(result)
+    assert "TRAIN SELECTION ELIGIBILITY" in md
+    fallback_rows = [
+        row
+        for row in result.windows
+        if row.train_selection
+        and row.train_selection.selected_eligibility is SelectionEligibility.FALLBACK_INELIGIBLE
+    ]
+    if fallback_rows:
+        assert any("TRAIN_SELECTION_FALLBACK" in w for w in result.warnings)
+        assert "FALLBACK_INELIGIBLE" in md
+        assert "WARNING window" in md
 
 
 def test_sharpe_methodology_documented() -> None:

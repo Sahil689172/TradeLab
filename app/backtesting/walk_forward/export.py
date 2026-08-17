@@ -61,15 +61,23 @@ def write_outputs(
 def _windows_csv(result: WalkForwardResult) -> str:
     lines = [
         "window_id,symbol,train_start,train_end,test_start,test_end,"
-        "selected,train_return,oos_return,oos_dd,oos_trades,start_capital,end_capital,rejected",
+        "selected,train_return,oos_return,oos_dd,oos_trades,start_capital,end_capital,rejected,"
+        "train_selection_status,selected_train_trades,min_train_trades,eligible_candidates,ineligible_candidates",
     ]
     for row in result.windows:
         w = row.window
+        sel = row.train_selection
+        status = sel.selected_eligibility.value if sel else ""
+        sel_trades = sel.selected_training_trade_count if sel else row.train.trade_count
+        min_trades = sel.minimum_training_trades if sel else result.config.minimum_training_trades
+        eligible = sel.eligible_count if sel else ""
+        ineligible = sel.ineligible_count if sel else ""
         lines.append(
             f"{w.window_id},{row.symbol},{w.train_start.isoformat()},{w.train_end.isoformat()},"
             f"{w.test_start.isoformat()},{w.test_end.isoformat()},{_csv(row.selected.config_key)},"
             f"{row.train.return_pct},{row.oos.return_pct},{row.oos.max_drawdown},"
-            f"{row.oos_trade_count},{row.starting_capital},{row.ending_capital},{row.rejected_count}",
+            f"{row.oos_trade_count},{row.starting_capital},{row.ending_capital},{row.rejected_count},"
+            f"{_csv(status)},{sel_trades},{min_trades},{eligible},{ineligible}",
         )
     return "\n".join(lines) + "\n"
 
