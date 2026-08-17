@@ -7,7 +7,7 @@ OOS trades and is labeled OUT-OF-SAMPLE MONTE CARLO.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 
 import pandas as pd
 
@@ -16,15 +16,30 @@ from app.backtesting.monte_carlo.robustness import assess_verdict, classify_samp
 from app.backtesting.monte_carlo.schemas import MonteCarloVerdict
 from app.backtesting.order_execution.schemas import ClosedTradeRecord
 from app.backtesting.portfolio_risk import PortfolioRiskEngine
+from app.backtesting.walk_forward.accounting import (
+    ACCOUNTING_MODEL,
+    ACCOUNTING_NOTE,
+    SHARPE_METHODOLOGY,
+    assert_costs_not_double_counted,
+    assert_ledger_invariant,
+)
 from app.backtesting.walk_forward.analysis import (
-    combined_metrics,
     degradation,
     mean_train_oos,
+    mean_window_return,
     oos_by_symbol,
     oos_by_year,
     parameter_stability,
     stitch_equity,
 )
+from app.backtesting.walk_forward.attribution import merge_attribution
+from app.backtesting.walk_forward.equity import (
+    assert_ledger_equity_matches_trades,
+    assert_market_timestamps_only,
+    combined_oos_end,
+    sanitize_equity_series,
+)
+from app.backtesting.walk_forward.sample_metrics import build_sample_aware_performance
 from app.backtesting.walk_forward.exceptions import WalkForwardConfigError
 from app.backtesting.walk_forward.execution import PeriodRun, run_period
 from app.backtesting.walk_forward.isolation import CachedFeatures, CachedMarket, frame_max_date, leakage_from_windows
@@ -33,7 +48,9 @@ from app.backtesting.walk_forward.schemas import (
     LIMITATION,
     CapitalMode,
     EquityPoint,
+    ExecutionAttribution,
     SelectionScope,
+    StrategyIdentity,
     WalkForwardConfig,
     WalkForwardResult,
     WindowResult,
@@ -83,6 +100,8 @@ class WalkForwardEngine:
         equity_segments: list[pd.Series] = []
         capital = float(self._config.initial_capital)
         rejected_total = 0
+        attributions: list[ExecutionAttribution] = []
+        attribution_by_symbol: dict[str, list[ExecutionAttribution]] = {}
         extra = _runner_extras(self._evaluator, self._strategy_factory)
         extra["frame_cache"] = {}
         n_cand_hint = _candidate_count(self._config, names[0])
@@ -97,8 +116,10 @@ class WalkForwardEngine:
         for window in windows:
             frozen_joint = None
             joint_n = 0
+            joint_selection = None
+            train_max = window.train_end
             if self._config.selection_scope is SelectionScope.JOINT:
-                frozen_joint, _joint_metrics, joint_n, train_max = (self._selector or select_joint)(
+                frozen_joint, _joint_metrics, joint_n, train_max, joint_selection = (self._selector or select_joint)(
                     symbols=names,
                     wf_config=self._config,
                     train_start=window.train_start,
@@ -117,8 +138,9 @@ class WalkForwardEngine:
                     f"Window {window.window_id}/{len(windows)} {symbol} "
                     f"TRAIN {window.train_label} ({n_cand_hint} candidate(s), one replay)...",
                 )
+                train_selection = joint_selection
                 if frozen_joint is None:
-                    frozen, train_metrics, n_cand, train_max = (self._selector or select_on_train)(
+                    frozen, train_metrics, n_cand, train_max, train_selection = (self._selector or select_on_train)(
                         symbol=symbol,
                         wf_config=self._config,
                         train_start=window.train_start,
@@ -189,11 +211,18 @@ class WalkForwardEngine:
                         selection_used_max_data_date=train_max,
                         oos_used_max_data_date=period.used_max,
                         rejected_count=period.rejected_count,
+                        attribution=period.attribution or ExecutionAttribution(),
+                        requested_strategy=period.requested_strategy or self._config.strategy_alias,
+                        execution_engine=period.execution_engine or "ema_trend",
+                        train_selection=train_selection,
                     ),
                 )
                 oos_trades.extend(period.trades)
                 equity_segments.append(period.equity)
                 rejected_total += period.rejected_count
+                if period.attribution is not None:
+                    attributions.append(period.attribution)
+                    attribution_by_symbol.setdefault(symbol, []).append(period.attribution)
                 if self._config.capital_mode is CapitalMode.COMPOUNDED:
                     capital = ending
                 self._progress(
@@ -206,29 +235,53 @@ class WalkForwardEngine:
             initial=self._config.initial_capital,
             mode=self._config.capital_mode,
         )
-        stats = combined_metrics(oos_trades, oos_equity, self._config.initial_capital)
+        oos_end = combined_oos_end(window_results)
+        if oos_end is not None:
+            cap = pd.Timestamp(datetime.combine(oos_end, time.max, tzinfo=timezone.utc))
+            oos_equity = sanitize_equity_series(oos_equity, max_timestamp=cap)
+        perf = build_sample_aware_performance(oos_trades, oos_equity, self._config.initial_capital)
+        assert_costs_not_double_counted(oos_trades)
+        assert_ledger_equity_matches_trades(
+            oos_equity,
+            oos_trades,
+            initial=self._config.initial_capital,
+        )
+        assert_ledger_invariant(
+            initial=self._config.initial_capital,
+            trades=oos_trades,
+            final_equity=float(perf.final_equity),
+        )
         train_mean, oos_mean = mean_train_oos(window_results)
-        deg = degradation(train_mean, oos_mean)
+        mean_oos_ret = mean_window_return(window_results, train=False)
+        mean_train_ret = mean_window_return(window_results, train=True)
+        combined_oos_ret = float(perf.return_pct)
+        deg = degradation(train_mean, oos_mean, oos_trade_count=len(oos_trades))
         stability = parameter_stability(window_results)
         quality = classify_sample_quality(len(oos_trades))
+        oos_attribution = merge_attribution(attributions)
+        oos_attribution_by_symbol = {
+            symbol: merge_attribution(rows) for symbol, rows in sorted(attribution_by_symbol.items())
+        }
+        generated_at = datetime.now(timezone.utc)
+        assert_market_timestamps_only(oos_equity, max_date=oos_end, generated_at=generated_at)
         verdict = assess_verdict(
             source_trade_count=len(oos_trades),
-            probability_of_loss=1.0 if float(stats["return"] or 0.0) < 0 else 0.0,
-            median_return=float(stats["return"] or 0.0),
-            p95_max_drawdown=-float(stats["max_drawdown"] or 0.0),
+            probability_of_loss=1.0 if float(perf.return_pct) < 0 else 0.0,
+            median_return=float(perf.return_pct),
+            p95_max_drawdown=-float(perf.max_drawdown),
             score=50.0 if len(oos_trades) else 0.0,
         )
+        mc_p_loss = None
+        mc_med = None
+        mc_sims = 0
         warnings = [
             LIMITATION,
-            f"{len(oos_trades)} OOS trades from {len(windows)} window(s). "
-            "Simulation count does not increase historical sample size.",
+            f"historical_oos_trades={len(oos_trades)} from {len(windows)} window(s). "
+            "simulation_count does not increase historical sample size.",
             f"SAMPLE_QUALITY={quality.value}; VERDICT={verdict.value}.",
             "capital_mode=compounded carries ending OOS equity into the next test window. "
             "capital_mode=fixed restarts each test window at initial_capital.",
         ]
-        mc_p_loss = None
-        mc_med = None
-        mc_sims = 0
         if self._config.include_monte_carlo and oos_trades:
             mc = MonteCarloEngine(
                 MonteCarloConfig(
@@ -257,28 +310,57 @@ class WalkForwardEngine:
             warnings.append("No complete train/test windows fit the configured data range.")
             verdict = MonteCarloVerdict.INSUFFICIENT_EVIDENCE
 
-        gross = float(stats["gross"] or 0.0)
-        costs = float(stats["costs"] or 0.0)
+        gross = float(perf.gross_profit)
+        costs = float(perf.total_costs)
+        years = 0.0
+        if len(oos_equity) >= 2:
+            delta = oos_equity.index[-1] - oos_equity.index[0]
+            years = max(pd.Timedelta(delta).total_seconds() / (365.25 * 24 * 3600), 0.0)
+        from app.backtesting.evaluation.metrics import cagr
+
+        oos_cagr = cagr(self._config.initial_capital, perf.final_equity, years) if years > 0 else None
         return WalkForwardResult(
             config=self._config,
             symbols=names,
             windows=window_results,
             window_count=len(windows),
             oos_trade_count=len(oos_trades),
-            oos_return=float(stats["return"] or 0.0),
-            oos_cagr=stats["cagr"],
-            oos_sharpe=float(stats["sharpe"] or 0.0),
-            oos_sortino=float(stats["sortino"] or 0.0),
-            oos_max_drawdown=float(stats["max_drawdown"] or 0.0),
-            oos_win_rate=float(stats["win_rate"] or 0.0),
-            oos_profit_factor=float(stats["profit_factor"] or 0.0),
+            historical_oos_trades=len(oos_trades),
+            accounting_model=ACCOUNTING_MODEL,
+            accounting_note=ACCOUNTING_NOTE,
+            combined_oos_return=combined_oos_ret,
+            mean_window_oos_return=mean_oos_ret,
+            combined_train_return=None,
+            mean_window_train_return=mean_train_ret,
+            oos_return=combined_oos_ret,
+            oos_cagr=oos_cagr,
+            oos_sharpe=perf.sharpe,
+            oos_sharpe_raw=perf.sharpe_raw,
+            oos_sharpe_status=perf.sharpe_status,
+            oos_sharpe_methodology=SHARPE_METHODOLOGY,
+            oos_sortino=perf.sortino,
+            oos_sortino_raw=perf.sortino_raw,
+            oos_sortino_status=perf.sortino_status,
+            oos_sortino_methodology=SHARPE_METHODOLOGY,
+            oos_max_drawdown=float(perf.max_drawdown),
+            oos_win_rate=perf.win_rate,
+            oos_win_rate_raw=perf.win_rate_raw,
+            oos_win_rate_status=perf.win_rate_status,
+            oos_profit_factor=perf.profit_factor,
+            oos_profit_factor_raw=perf.profit_factor_raw,
+            oos_profit_factor_status=perf.profit_factor_status,
             oos_gross_profit=gross,
-            oos_net_profit=float(stats["net"] or 0.0),
+            oos_net_profit=float(perf.net_profit),
             oos_total_costs=costs,
             oos_cost_pct_of_gross=(costs / abs(gross)) if abs(gross) > 1e-12 else None,
+            oos_performance=perf,
             initial_capital=self._config.initial_capital,
-            final_oos_equity=float(stats["final"] or self._config.initial_capital),
+            final_oos_equity=float(perf.final_equity),
             capital_mode=self._config.capital_mode,
+            strategy_identity=StrategyIdentity(
+                requested_strategy=self._config.strategy_alias,
+                execution_engine="ema_trend",
+            ),
             degradation=deg,
             parameter_stability=stability,
             leakage=leakage,
@@ -287,13 +369,16 @@ class WalkForwardEngine:
             monte_carlo_probability_of_loss=mc_p_loss,
             monte_carlo_median_return=mc_med,
             monte_carlo_simulations=mc_sims,
+            simulation_count=mc_sims,
             warnings=warnings,
             oos_by_year=oos_by_year(oos_trades, self._config.initial_capital),
             oos_by_symbol=oos_by_symbol(oos_trades, self._config.initial_capital),
             oos_trades=oos_trades,
             equity_curve=_equity_points(oos_equity),
             oos_rejected_count=rejected_total,
-            generated_at=datetime.now(timezone.utc),
+            oos_attribution=oos_attribution,
+            oos_attribution_by_symbol=oos_attribution_by_symbol,
+            generated_at=generated_at,
         )
 
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.backtesting.walk_forward.charts import write_charts
 from app.backtesting.walk_forward.report import format_markdown_report
-from app.backtesting.walk_forward.schemas import WalkForwardResult
+from app.backtesting.walk_forward.schemas import WalkForwardResult, MetricStatus
 
 
 def write_outputs(
@@ -77,26 +77,51 @@ def _windows_csv(result: WalkForwardResult) -> str:
 def _metrics_csv(result: WalkForwardResult, *, train: bool) -> str:
     lines = [
         "window_id,symbol,config_key,return_pct,sharpe,sortino,max_drawdown,"
-        "win_rate,profit_factor,trade_count,total_costs,net_profit,gross_profit,score",
+        "win_rate,profit_factor,trade_count,total_costs,net_profit,gross_profit,score,"
+        "sharpe_status,win_rate_status,profit_factor_status",
     ]
     for row in result.windows:
         m = row.train if train else row.oos
+        tc = row.oos_trade_count if not train else m.trade_count
+        sharpe_status = (
+            MetricStatus.NO_TRADES
+            if tc == 0
+            else MetricStatus.INSUFFICIENT_SAMPLE
+            if tc < 2
+            else MetricStatus.LOW_SAMPLE
+            if tc < 5
+            else MetricStatus.VALID
+        )
+        win_status = MetricStatus.NO_TRADES if tc == 0 else MetricStatus.LOW_SAMPLE if tc < 5 else MetricStatus.VALID
+        pf_status = (
+            MetricStatus.NO_TRADES
+            if tc == 0
+            else MetricStatus.NO_WINNING_TRADES
+            if m.gross_profit <= 0
+            else MetricStatus.LOW_SAMPLE
+            if tc < 5
+            else MetricStatus.VALID
+        )
         lines.append(
             f"{row.window.window_id},{row.symbol},{_csv(m.config_key)},{m.return_pct},"
             f"{m.sharpe},{m.sortino},{m.max_drawdown},{m.win_rate},{m.profit_factor},"
-            f"{m.trade_count},{m.total_costs},{m.net_profit},{m.gross_profit},{m.score}",
+            f"{m.trade_count},{m.total_costs},{m.net_profit},{m.gross_profit},{m.score},"
+            f"{sharpe_status.value},{win_status.value},{pf_status.value}",
         )
     return "\n".join(lines) + "\n"
 
 
 def _trades_csv(result: WalkForwardResult) -> str:
     lines = [
-        "symbol,strategy_name,entry_timestamp,exit_timestamp,entry_price,exit_price,"
+        "symbol,requested_strategy,execution_engine,strategy_name,entry_timestamp,exit_timestamp,entry_price,exit_price,"
         "quantity,gross_profit,brokerage,slippage,net_profit,holding_days,exit_reason",
     ]
+    identity = result.strategy_identity
+    requested = identity.requested_strategy if identity else result.config.strategy_alias
+    engine_name = identity.execution_engine if identity else "ema_trend"
     for trade in result.oos_trades:
         lines.append(
-            f"{trade.symbol},{_csv(trade.strategy_name)},{trade.entry_timestamp.isoformat()},"
+            f"{trade.symbol},{_csv(requested)},{_csv(engine_name)},{_csv(trade.strategy_name)},{trade.entry_timestamp.isoformat()},"
             f"{trade.exit_timestamp.isoformat()},{trade.entry_price},{trade.exit_price},"
             f"{trade.quantity},{trade.gross_profit},{trade.brokerage},{trade.slippage},"
             f"{trade.net_profit},{trade.holding_days},{_csv(trade.exit_reason.value)}",

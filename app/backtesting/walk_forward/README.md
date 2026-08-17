@@ -24,3 +24,6 @@ sees `timestamp > train_end`.
 
 Walk-forward does not prove future profitability. Monte Carlo on OOS trades
 does not create new independent historical observations.
+
+Canonical equity curves use market timestamps only; see
+`app/backtesting/walk_forward/equity.py`.

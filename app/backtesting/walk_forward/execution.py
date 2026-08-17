@@ -19,7 +19,9 @@ from app.backtesting.order_execution.schemas import ClosedTradeRecord
 from app.backtesting.replay_engine import HistoricalReplayEngine, ReplayConfig, ReplayResult, ReplaySpeed
 from app.backtesting.replay_engine.adapters import ContextStrategyEvaluator
 from app.backtesting.walk_forward.isolation import DateCappedFeatures, DateCappedMarket, frame_max_date
-from app.backtesting.walk_forward.schemas import CandidateMetrics, WalkForwardConfig
+from app.backtesting.walk_forward.attribution import build_execution_attribution
+from app.backtesting.walk_forward.equity import canonical_equity_series
+from app.backtesting.walk_forward.schemas import CandidateMetrics, ExecutionAttribution, WalkForwardConfig
 from app.backtesting.walk_forward.search import config_key, config_params
 from app.feature_engine.strategy_frame import ensure_strategy_indicators
 from app.market_structure.schemas import TrendDirection
@@ -148,6 +150,9 @@ class PeriodRun:
     used_max: date
     rejected_count: int = 0
     frozen_key: str = ""
+    attribution: ExecutionAttribution | None = None
+    requested_strategy: str = ""
+    execution_engine: str = "ema_trend"
     extras: dict[str, object] = field(default_factory=dict)
 
 
@@ -345,21 +350,37 @@ def _execute_replay(
         for trade in result.trade_log
         if _as_date(trade.entry_timestamp) >= start and _as_date(trade.entry_timestamp) <= end
     ]
-    equity = _equity_series(result, initial_capital)
+    equity = canonical_equity_series(
+        trades,
+        initial=initial_capital,
+        period_start=start,
+        period_end=end,
+    )
+    ledger_final = float(equity.iloc[-1]) if len(equity) else float(initial_capital)
     metrics = _metrics_from_run(
         strategy_config,
         trades,
         equity,
         initial_capital,
-        float(result.final_account.equity),
+        ledger_final,
+    )
+    attribution = build_execution_attribution(
+        replay,
+        result,
+        period_start=start,
+        period_end=end,
+        completed_trades=len(trades),
     )
     return PeriodRun(
         trades=trades,
         equity=equity,
         metrics=metrics,
         used_max=used_max,
-        rejected_count=len(result.rejected_orders),
+        rejected_count=attribution.orders_rejected,
         frozen_key=config_key(strategy_config),
+        attribution=attribution,
+        requested_strategy=wf_config.strategy_alias,
+        execution_engine=strategy_config.strategy_name,
     )
 
 
@@ -370,41 +391,6 @@ def _as_date(value: object) -> date:
         except Exception:
             pass
     return pd.Timestamp(value).date()
-
-
-def _utc_ts(value: object) -> pd.Timestamp:
-    stamp = pd.Timestamp(value)
-    if stamp.tzinfo is None:
-        return stamp.tz_localize("UTC")
-    return stamp.tz_convert("UTC")
-
-
-def _equity_series(result: object, initial: float) -> pd.Series:
-    points: list[tuple[pd.Timestamp, float]] = []
-    for attempt in getattr(result, "attempts", []):
-        ts = None
-        if getattr(attempt, "fill", None) is not None:
-            ts = _utc_ts(attempt.fill.filled_at)
-        elif getattr(attempt, "rejected", None) is not None:
-            ts = _utc_ts(attempt.rejected.timestamp)
-        if ts is None:
-            continue
-        points.append((ts, float(attempt.account.equity)))
-    completed = getattr(result, "completed_at", None)
-    final_equity = float(getattr(result, "final_account").equity)
-    if completed is not None:
-        points.append((_utc_ts(completed), final_equity))
-    if not points:
-        ts = _utc_ts(completed) if completed is not None else pd.Timestamp.utcnow()
-        if ts.tzinfo is None:
-            ts = ts.tz_localize("UTC")
-        return pd.Series([final_equity], index=pd.DatetimeIndex([ts]))
-    frame = pd.DataFrame(points, columns=["ts", "equity"]).drop_duplicates("ts", keep="last")
-    series = frame.set_index("ts")["equity"].astype(float).sort_index()
-    if float(series.iloc[0]) != float(initial):
-        first_ts = series.index[0] - pd.Timedelta(seconds=1)
-        series = pd.concat([pd.Series([float(initial)], index=pd.DatetimeIndex([first_ts])), series])
-    return series
 
 
 def _metrics_from_run(

@@ -97,15 +97,100 @@ path.
 
 Test windows are concatenated in time. Training equity is omitted.
 
+### Canonical equity curve
+
+`equity_curve.csv` and OOS charts use a **canonical** equity series:
+
+| Field | Meaning |
+|-------|---------|
+| `timestamp` | Market / backtest event time (fills, rejected orders, trade exits) |
+| `equity` | Account equity **after** that event |
+
+The series must **not** include report generation time, CLI execution time,
+replay `completed_at`, or `datetime.now()`. If report metadata is needed, use
+`generated_at` in `walk_forward_report.json` only.
+
+Rules:
+
+- Timestamps are sorted ascending.
+- Duplicate timestamps keep the **last** equity value (deterministic).
+- No timestamp may exceed the last OOS `test_end`.
+- Drawdown and max drawdown use this same series.
+
 `--capital-mode compounded` (default): the next test window starts at the
 previous test window’s ending equity.
 
 `--capital-mode fixed`: every test window restarts at `--initial-capital`.
 
+## Accounting model (A5.2 / A5.9)
+
+| Field | Meaning |
+|-------|---------|
+| `entry_price` / `exit_price` | Slippage-adjusted execution prices |
+| `gross_profit` | `(exit − entry) × qty` at execution prices |
+| `brokerage` | Round-trip brokerage |
+| `slippage` | Explicit slippage vs reference prices (also embedded in execution prices) |
+| `net_profit` | `gross − brokerage − slippage` |
+
+**Canonical walk-forward equity** uses the trade ledger only:
+
+`equity = initial_capital + Σ net_profit` at each trade exit.
+
+Broker snapshot equity can differ by `Σ slippage` because cash flows use
+execution prices while `net_profit` also deducts slippage explicitly.
+
+**Return semantics:**
+
+- `combined_oos_return`: from canonical compounded equity (final vs initial)
+- `mean_window_oos_return`: arithmetic mean of per-window OOS return %
+- Degradation compares **mean** train vs **mean** window OOS returns
+
+**Sharpe / Sortino:** step returns from the canonical equity series
+(`canonical_equity_step_returns`), not an average of per-window Sharpes.
+
+**Training selection:** `minimum_training_trades` (default 5) marks candidates
+with fewer TRAIN trades as `INELIGIBLE_INSUFFICIENT_TRAIN_SAMPLE`. If none
+qualify, the best score is chosen with `FALLBACK_ALL_INELIGIBLE` (diagnostic).
+
+## Sample-aware statistics
+
+OOS windows may contain very few trades. Reported metrics separate **raw**
+calculations from **validity**:
+
+| Condition | Sharpe / Sortino | Win rate | Profit factor |
+|-----------|------------------|----------|---------------|
+| 0 trades | n/a (`NO_TRADES` / `INSUFFICIENT_SAMPLE`) | n/a | n/a |
+| 1 trade | n/a (`INSUFFICIENT_SAMPLE`) | shown with `LOW_SAMPLE` if &lt;5 trades | n/a if no winners |
+| 2–4 trades | shown with `LOW_SAMPLE` | shown with `LOW_SAMPLE` | shown with `LOW_SAMPLE` if winners exist |
+
+Verdict remains `INSUFFICIENT_EVIDENCE` when historical OOS trades ≤ 4.
+Monte Carlo `simulation_count` never increases `historical_oos_trades`.
+
+## Execution attribution
+
+OOS reporting distinguishes:
+
+- **Signals generated** (BUY/SELL recommendations)
+- **Hold bars** (no order for HOLD / no-order-for-signal)
+- **Orders attempted / filled / rejected** (execution constraints)
+- **Completed trades**
+
+Zero OOS trades with rejected orders is **not** the same as “strategy generated
+no signals.”
+
+## Strategy identity
+
+CLI `--strategy ema_professional` is the **requested** alias. The execution
+engine remains `ema_trend` (`EMATrendStrategy`). Reports and `oos_trades.csv`
+include both `requested_strategy` and `execution_engine`.
+
 ## Train vs OOS degradation
 
 Reported ratios are **OOS / Train**. Degradation percent is
 `(Train − OOS) / |Train|`.
+
+Degradation is labeled **DESCRIPTIVE DIAGNOSTIC** — not statistical proof.
+When OOS trade count &lt; 5, reports append `INSUFFICIENT_OOS_SAMPLE`.
 
 Caution bands (`degradation_return_caution`, `degradation_sharpe_caution`,
 default 0.5) are diagnostics. Crossing a band is **not** an automatic fail.
@@ -115,6 +200,10 @@ default 0.5) are diagnostics. Crossing a band is **not** an automatic fail.
 A5.9 records the selected `config_key` per window: frequency, number of
 changes, most frequent configuration, and
 `stability_score = 1 − changes / (windows − 1)`.
+
+Reports also include `unique_config_count`, `oos_trade_count`, and
+`coverage_status`. A stability score of 1.0 with zero OOS trades means
+**stable configuration, but no OOS trade evidence** — not robustness.
 
 Fragile parameter hopping is a diagnostic, not a profitability claim.
 

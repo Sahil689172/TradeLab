@@ -7,11 +7,55 @@ from datetime import date
 
 from app.backtesting.walk_forward.exceptions import WalkForwardLeakageError
 from app.backtesting.walk_forward.execution import PeriodRun, run_period, score_train_grid
-from app.backtesting.walk_forward.schemas import CandidateMetrics, WalkForwardConfig
+from app.backtesting.walk_forward.schemas import (
+    CandidateMetrics,
+    SelectionEligibility,
+    TrainSelectionDiagnostic,
+    WalkForwardConfig,
+)
 from app.backtesting.walk_forward.search import config_key, iter_candidates
 from app.strategies.ema_trend import EMATrendConfig
 
 Runner = Callable[..., PeriodRun]
+RankRow = tuple[float, str, EMATrendConfig, CandidateMetrics, date]
+
+
+def _pick_candidate(
+    ranked: list[RankRow],
+    *,
+    minimum_training_trades: int,
+) -> tuple[EMATrendConfig, CandidateMetrics, date, TrainSelectionDiagnostic]:
+    evaluated = len(ranked)
+    zero_trade = sum(1 for row in ranked if row[3].trade_count == 0)
+    eligible = [row for row in ranked if row[3].trade_count >= minimum_training_trades]
+    ineligible = evaluated - len(eligible)
+    pool = eligible if eligible else ranked
+    if eligible:
+        eligibility = SelectionEligibility.ELIGIBLE
+        note = (
+            f"{len(eligible)}/{evaluated} candidate(s) met "
+            f"minimum_training_trades>={minimum_training_trades}."
+        )
+    else:
+        eligibility = SelectionEligibility.FALLBACK_ALL_INELIGIBLE
+        note = (
+            f"No candidate met minimum_training_trades>={minimum_training_trades}; "
+            "selected best score among all candidates (diagnostic only)."
+        )
+    pool = sorted(pool)
+    _neg, _key, chosen, metrics, used_max = pool[0]
+    if not eligible and metrics.trade_count < minimum_training_trades:
+        eligibility = SelectionEligibility.INELIGIBLE_INSUFFICIENT_TRAIN_SAMPLE
+    diagnostic = TrainSelectionDiagnostic(
+        minimum_training_trades=minimum_training_trades,
+        candidates_evaluated=evaluated,
+        eligible_count=len(eligible),
+        ineligible_count=ineligible,
+        zero_trade_candidates=zero_trade,
+        selected_eligibility=eligibility,
+        note=note,
+    )
+    return chosen, metrics, used_max, diagnostic
 
 
 def select_on_train(
@@ -25,7 +69,7 @@ def select_on_train(
     initial_capital: float,
     runner: Runner = run_period,
     **runner_kwargs: object,
-) -> tuple[EMATrendConfig, CandidateMetrics, int, date]:
+) -> tuple[EMATrendConfig, CandidateMetrics, int, date, TrainSelectionDiagnostic]:
     """Evaluate declared candidates on TRAIN only. Deterministic tie-break."""
     candidates = list(
         iter_candidates(
@@ -40,7 +84,7 @@ def select_on_train(
         and runner_kwargs.get("strategy_factory") is None
         and len(candidates) > 1
     )
-    ranked: list[tuple[float, str, EMATrendConfig, CandidateMetrics, date]] = []
+    ranked: list[RankRow] = []
     if use_grid:
         scored = score_train_grid(
             symbol=symbol,
@@ -56,7 +100,9 @@ def select_on_train(
         for candidate, period in scored:
             if period.used_max > train_end:
                 raise WalkForwardLeakageError("training run saw data after train_end")
-            ranked.append((-period.metrics.score, period.metrics.config_key, candidate, period.metrics, period.used_max))
+            ranked.append(
+                (-period.metrics.score, period.metrics.config_key, candidate, period.metrics, period.used_max),
+            )
     else:
         for candidate in candidates:
             period = runner(
@@ -72,7 +118,9 @@ def select_on_train(
             )
             if period.used_max > train_end:
                 raise WalkForwardLeakageError("training run saw data after train_end")
-            ranked.append((-period.metrics.score, period.metrics.config_key, candidate, period.metrics, period.used_max))
+            ranked.append(
+                (-period.metrics.score, period.metrics.config_key, candidate, period.metrics, period.used_max),
+            )
     if not ranked:
         fallback = EMATrendConfig.professional(
             symbol=symbol,
@@ -89,10 +137,21 @@ def select_on_train(
             initial_capital=initial_capital,
             **runner_kwargs,
         )
-        return fallback, period.metrics, 1, period.used_max
-    ranked.sort()
-    _neg, _key, chosen, metrics, used_max = ranked[0]
-    return chosen, metrics, len(candidates) or len(ranked), used_max
+        diagnostic = TrainSelectionDiagnostic(
+            minimum_training_trades=wf_config.minimum_training_trades,
+            candidates_evaluated=1,
+            eligible_count=1 if period.metrics.trade_count >= wf_config.minimum_training_trades else 0,
+            ineligible_count=0 if period.metrics.trade_count >= wf_config.minimum_training_trades else 1,
+            zero_trade_candidates=1 if period.metrics.trade_count == 0 else 0,
+            selected_eligibility=SelectionEligibility.ELIGIBLE,
+            note="fallback single candidate",
+        )
+        return fallback, period.metrics, 1, period.used_max, diagnostic
+    chosen, metrics, used_max, diagnostic = _pick_candidate(
+        ranked,
+        minimum_training_trades=wf_config.minimum_training_trades,
+    )
+    return chosen, metrics, len(candidates) or len(ranked), used_max, diagnostic
 
 
 def select_joint(
@@ -106,10 +165,10 @@ def select_joint(
     initial_capital: float,
     runner: Runner = run_period,
     **runner_kwargs: object,
-) -> tuple[EMATrendConfig, CandidateMetrics, int, date]:
+) -> tuple[EMATrendConfig, CandidateMetrics, int, date, TrainSelectionDiagnostic]:
     """One configuration scored on every symbol's TRAIN window only."""
     names = [s.strip().upper() for s in symbols]
-    ranked: list[tuple[float, str, EMATrendConfig, CandidateMetrics, date]] = []
+    ranked: list[tuple[float, str, EMATrendConfig, CandidateMetrics, date, int]] = []
     used_max = train_end
     count = 0
     for candidate in iter_candidates(
@@ -120,6 +179,7 @@ def select_joint(
         count += 1
         score = 0.0
         last: CandidateMetrics | None = None
+        total_trades = 0
         for symbol in names:
             period = runner(
                 symbol=symbol,
@@ -136,11 +196,16 @@ def select_joint(
                 raise WalkForwardLeakageError(f"{symbol} training run saw data after train_end")
             used_max = max(used_max, period.used_max) if period.used_max else used_max
             score += period.metrics.score
+            total_trades += period.metrics.trade_count
             last = period.metrics
         assert last is not None
-        ranked.append((-score, config_key(candidate), candidate, last, used_max))
+        joint_metrics = last.model_copy(update={"trade_count": total_trades, "config_key": config_key(candidate)})
+        ranked.append((-score, config_key(candidate), candidate, joint_metrics, used_max, total_trades))
     if not ranked:
         raise WalkForwardLeakageError("joint search produced no candidates")
-    ranked.sort()
-    _neg, _key, chosen, metrics, latest = ranked[0]
-    return chosen, metrics, count, latest
+    rows: list[RankRow] = [(a, b, c, d, e) for a, b, c, d, e, _ in ranked]
+    chosen, metrics, latest, diagnostic = _pick_candidate(
+        rows,
+        minimum_training_trades=wf_config.minimum_training_trades,
+    )
+    return chosen, metrics, count, latest, diagnostic

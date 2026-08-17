@@ -23,9 +23,22 @@ from app.backtesting.walk_forward import (
     write_outputs,
 )
 from app.backtesting.walk_forward.execution import PeriodRun, run_period
+from app.backtesting.walk_forward.equity import (
+    assert_market_timestamps_only,
+    canonical_equity_series,
+    market_equity_series,
+    sanitize_equity_series,
+)
 from app.backtesting.walk_forward.isolation import DateCappedMarket, frame_max_date
 from app.backtesting.walk_forward.optimizer import select_on_train
-from app.backtesting.walk_forward.schemas import CandidateMetrics
+from app.backtesting.walk_forward.sample_metrics import build_sample_aware_performance
+from app.backtesting.walk_forward.schemas import (
+    CandidateMetrics,
+    ExecutionAttribution,
+    MetricStatus,
+    SelectionEligibility,
+    TrainSelectionDiagnostic,
+)
 from app.backtesting.walk_forward.search import config_key
 from app.market_structure.schemas import TrendDirection
 from app.services.trade_recommendation.schemas import TradeRecommendation
@@ -203,6 +216,20 @@ def _frozen(symbol: str = "RELIANCE") -> EMATrendConfig:
     )
 
 
+def _train_diagnostic(**kwargs: object) -> TrainSelectionDiagnostic:
+    base: dict[str, object] = dict(
+        minimum_training_trades=5,
+        candidates_evaluated=2,
+        eligible_count=2,
+        ineligible_count=0,
+        zero_trade_candidates=0,
+        selected_eligibility=SelectionEligibility.ELIGIBLE,
+        note="test stub",
+    )
+    base.update(kwargs)
+    return TrainSelectionDiagnostic(**base)
+
+
 class _Scripted:
     def __init__(self, pnl_by_year: dict[int, float] | None = None) -> None:
         self.calls: list[tuple[str, date, date, float, str]] = []
@@ -212,7 +239,7 @@ class _Scripted:
     def selector(self, *, symbol: str, train_start: date, train_end: date, **kwargs: object):
         self.selects.append((symbol, train_start, train_end))
         cfg = _frozen(symbol)
-        return cfg, _metrics(key=config_key(cfg)), 2, train_end
+        return cfg, _metrics(key=config_key(cfg)), 2, train_end, _train_diagnostic()
 
     def runner(
         self,
@@ -229,10 +256,28 @@ class _Scripted:
         pnl = float(self.pnl_by_year.get(start.year, 1000.0))
         entry = datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc)
         trade = _closed(symbol, entry, pnl)
-        idx = pd.DatetimeIndex([entry, entry + timedelta(days=1)])
-        equity = pd.Series([initial_capital, initial_capital + pnl], index=idx)
+        equity = canonical_equity_series(
+            [trade],
+            initial=initial_capital,
+            period_start=start,
+            period_end=end,
+        )
         metrics = _metrics(key=key, ret=pnl / initial_capital if initial_capital else 0.0, net=pnl, trades=1)
-        return PeriodRun(trades=[trade], equity=equity, metrics=metrics, used_max=end, frozen_key=key)
+        return PeriodRun(
+            trades=[trade],
+            equity=equity,
+            metrics=metrics,
+            used_max=end,
+            frozen_key=key,
+            attribution=ExecutionAttribution(
+                signals_generated=2,
+                orders_attempted=2,
+                orders_filled=2,
+                completed_trades=1,
+            ),
+            requested_strategy="ema_professional",
+            execution_engine="ema_trend",
+        )
 
 
 def _ports(n: int = 50, symbols: tuple[str, ...] = ("RELIANCE",), **ohlcv_kwargs: object):
@@ -308,7 +353,7 @@ def test_test_data_cannot_change_training_selection() -> None:
     market_b = _StaticMarket({"RELIANCE": poisoned})
     feats_b = _StaticFeatures({"RELIANCE": _features(poisoned)})
     cfg = _cfg(search=_search(ema_pair_presets=("9_21", "12_26")))
-    a, ma, na, _ = select_on_train(
+    a, ma, na, _, _ = select_on_train(
         symbol="RELIANCE",
         wf_config=cfg,
         train_start=train_start,
@@ -317,7 +362,7 @@ def test_test_data_cannot_change_training_selection() -> None:
         features=feats_a,
         initial_capital=100_000.0,
     )
-    b, mb, nb, _ = select_on_train(
+    b, mb, nb, _, _ = select_on_train(
         symbol="RELIANCE",
         wf_config=cfg,
         train_start=train_start,
@@ -679,7 +724,7 @@ def test_parameter_stability() -> None:
     def selector(*, symbol: str, train_start: date, train_end: date, **kwargs: object):
         cfg = _frozen(symbol) if train_start.day <= 15 else alt
         scripted.selects.append((symbol, train_start, train_end))
-        return cfg, _metrics(key=config_key(cfg)), 2, train_end
+        return cfg, _metrics(key=config_key(cfg)), 2, train_end, _train_diagnostic()
 
     result = WalkForwardEngine(
         _cfg(data_start=start, data_end=end, train_days=10, test_days=5, step_days=8),
@@ -690,3 +735,327 @@ def test_parameter_stability() -> None:
     assert 0.0 <= result.parameter_stability.stability_score <= 1.0
     assert result.parameter_stability.most_frequent
     assert result.degradation.note
+    assert result.degradation.label.value == "DESCRIPTIVE_DIAGNOSTIC"
+
+
+def test_equity_curve_has_no_runtime_timestamps() -> None:
+    market, features, frames = _ports(40)
+    start = frames["RELIANCE"]["date"].min().date()
+    end = frames["RELIANCE"]["date"].max().date()
+    result = WalkForwardEngine(
+        _cfg(data_start=start, data_end=end),
+        selector=_Scripted().selector,
+        runner=_Scripted().runner,
+    ).run(symbols=["RELIANCE"], market_data=market, features=features)
+    assert result.equity_curve
+    index = pd.DatetimeIndex([p.timestamp for p in result.equity_curve])
+    assert index.is_monotonic_increasing
+    last_test_end = result.windows[-1].window.test_end
+    assert_market_timestamps_only(
+        pd.Series([p.equity for p in result.equity_curve], index=index),
+        max_date=last_test_end,
+        generated_at=result.generated_at,
+    )
+    if result.generated_at is not None:
+        assert (index >= pd.Timestamp(result.generated_at)).sum() == 0
+
+
+def test_equity_curve_duplicate_timestamps_deterministic() -> None:
+    ts = pd.Timestamp("2023-06-01", tz="UTC")
+    series = pd.Series([100.0, 101.0, 102.0], index=pd.DatetimeIndex([ts, ts, ts + pd.Timedelta(days=1)]))
+    cleaned = sanitize_equity_series(series)
+    assert len(cleaned) == 2
+    assert float(cleaned.loc[ts]) == 101.0
+
+
+def test_sample_aware_zero_trade_win_rate() -> None:
+    equity = pd.Series([100_000.0, 99_000.0], index=pd.to_datetime(["2023-01-02", "2023-01-03"], utc=True))
+    perf = build_sample_aware_performance([], equity, 100_000.0)
+    assert perf.win_rate is None
+    assert perf.win_rate_status is MetricStatus.NO_TRADES
+    assert perf.sharpe is None
+    assert perf.sharpe_status is MetricStatus.INSUFFICIENT_SAMPLE
+
+
+def test_sample_aware_one_trade_sharpe_insufficient() -> None:
+    trade = _closed("RELIANCE", datetime(2023, 1, 2, tzinfo=timezone.utc), -500.0)
+    equity = pd.Series([100_000.0, 99_500.0], index=pd.to_datetime(["2023-01-02", "2023-01-03"], utc=True))
+    perf = build_sample_aware_performance([trade], equity, 100_000.0)
+    assert perf.trade_count == 1
+    assert perf.sharpe is None
+    assert perf.sharpe_status is MetricStatus.INSUFFICIENT_SAMPLE
+    assert perf.sharpe_raw is not None
+
+
+def test_sample_aware_profit_factor_no_winners() -> None:
+    trade = _closed("RELIANCE", datetime(2023, 1, 2, tzinfo=timezone.utc), -500.0)
+    equity = pd.Series([100_000.0, 99_500.0], index=pd.to_datetime(["2023-01-02", "2023-01-03"], utc=True))
+    perf = build_sample_aware_performance([trade], equity, 100_000.0)
+    assert perf.profit_factor is None
+    assert perf.profit_factor_status is MetricStatus.NO_WINNING_TRADES
+
+
+def test_rejected_orders_attribution_separate_from_no_signal() -> None:
+    market, features, _ = _ports(20, price=50_000.0)
+    start, end = _frame_span(features)
+    period = run_period(
+        symbol="RELIANCE",
+        strategy_config=_frozen(),
+        wf_config=_cfg(data_start=start, data_end=end, initial_capital=500.0, min_quantity=1.0),
+        start=start,
+        end=end,
+        market_data=market,
+        features=features,
+        initial_capital=500.0,
+        evaluator=_PulseEvaluator(),
+    )
+    assert period.trades == []
+    assert period.attribution is not None
+    assert period.attribution.signals_generated >= 1
+    assert period.attribution.orders_rejected >= 1
+    assert period.attribution.completed_trades == 0
+
+
+def test_strategy_identity_preserved() -> None:
+    market, features, frames = _ports(40)
+    start = frames["RELIANCE"]["date"].min().date()
+    end = frames["RELIANCE"]["date"].max().date()
+    result = WalkForwardEngine(
+        _cfg(data_start=start, data_end=end, strategy_alias="ema_professional"),
+        selector=_Scripted().selector,
+        runner=_Scripted().runner,
+    ).run(symbols=["RELIANCE"], market_data=market, features=features)
+    assert result.strategy_identity is not None
+    assert result.strategy_identity.requested_strategy == "ema_professional"
+    assert result.strategy_identity.execution_engine == "ema_trend"
+    for row in result.windows:
+        assert row.requested_strategy == "ema_professional"
+        assert row.execution_engine == "ema_trend"
+
+
+def test_parameter_stability_no_oos_trades_not_robust() -> None:
+    market, features, frames = _ports(40)
+    start = frames["RELIANCE"]["date"].min().date()
+    end = frames["RELIANCE"]["date"].max().date()
+
+    class _NoTradeRunner(_Scripted):
+        def runner(self, **kwargs: object) -> PeriodRun:
+            period = super().runner(**kwargs)
+            start = kwargs["start"]
+            end = kwargs["end"]
+            initial_capital = float(kwargs["initial_capital"])
+            equity = canonical_equity_series(
+                [],
+                initial=initial_capital,
+                period_start=start,
+                period_end=end,
+            )
+            return PeriodRun(
+                trades=[],
+                equity=equity,
+                metrics=_metrics(key=period.frozen_key, ret=0.0, trades=0, net=0.0, sharpe=0.0),
+                used_max=period.used_max,
+                frozen_key=period.frozen_key,
+                attribution=ExecutionAttribution(),
+                requested_strategy="ema_professional",
+                execution_engine="ema_trend",
+            )
+
+    scripted = _NoTradeRunner()
+    result = WalkForwardEngine(
+        _cfg(data_start=start, data_end=end),
+        selector=scripted.selector,
+        runner=scripted.runner,
+    ).run(symbols=["RELIANCE"], market_data=market, features=features)
+    assert result.oos_trade_count == 0
+    assert result.parameter_stability.oos_trade_count == 0
+    assert "NO OOS TRADE EVIDENCE" in result.parameter_stability.interpretation.upper()
+
+
+def test_combined_oos_insufficient_evidence_verdict() -> None:
+    market, features, frames = _ports(40)
+    start = frames["RELIANCE"]["date"].min().date()
+    end = frames["RELIANCE"]["date"].max().date()
+    result = WalkForwardEngine(
+        _cfg(data_start=start, data_end=end, include_monte_carlo=True, simulations=1000),
+        selector=_Scripted().selector,
+        runner=_Scripted().runner,
+    ).run(symbols=["RELIANCE"], market_data=market, features=features)
+    assert result.verdict.value == "INSUFFICIENT_EVIDENCE"
+    assert result.historical_oos_trades == result.oos_trade_count
+    assert result.simulation_count == result.monte_carlo_simulations
+
+
+def test_multi_symbol_walk_forward_isolation() -> None:
+    market, features, frames = _ports(40, symbols=("RELIANCE", "TCS"))
+    start = frames["RELIANCE"]["date"].min().date()
+    end = frames["RELIANCE"]["date"].max().date()
+    result = WalkForwardEngine(
+        _cfg(data_start=start, data_end=end, step_days=20),
+        selector=_Scripted().selector,
+        runner=_Scripted().runner,
+    ).run(symbols=["RELIANCE", "TCS"], market_data=market, features=features)
+    symbols = {row.symbol for row in result.windows}
+    assert symbols == {"RELIANCE", "TCS"}
+    assert set(result.oos_attribution_by_symbol) <= {"RELIANCE", "TCS"}
+
+
+def test_market_equity_series_rejects_completed_at() -> None:
+    from app.backtesting.order_execution.schemas import (
+        AccountSnapshot,
+        ExecutionAttempt,
+        ExecutionConfig,
+        ExecutionResult,
+        ExecutionSummary,
+        RejectedOrderRecord,
+        RejectionReason,
+    )
+
+    runtime = datetime(2026, 8, 17, 7, 41, 27, tzinfo=timezone.utc)
+    market_ts = datetime(2024, 3, 22, tzinfo=timezone.utc)
+    account = AccountSnapshot(
+        cash=90_000.0,
+        initial_capital=100_000.0,
+        realized_pnl=-10_000.0,
+        unrealized_pnl=0.0,
+        equity=90_000.0,
+    )
+    attempt = ExecutionAttempt(
+        accepted=False,
+        reason_code=RejectionReason.INSUFFICIENT_CASH,
+        rejected=RejectedOrderRecord(
+            timestamp=market_ts,
+            symbol="RELIANCE",
+            reason=RejectionReason.INSUFFICIENT_CASH.value,
+            reason_code=RejectionReason.INSUFFICIENT_CASH,
+        ),
+        account=account,
+    )
+    result = ExecutionResult(
+        config=ExecutionConfig(initial_capital=100_000.0),
+        started_at=runtime,
+        completed_at=runtime,
+        attempts=[attempt],
+        final_account=account,
+        summary=ExecutionSummary(
+            orders_attempted=1,
+            orders_rejected=1,
+            current_cash=90_000.0,
+            current_equity=90_000.0,
+        ),
+        orders_rejected=1,
+    )
+    series = market_equity_series(
+        result,
+        trades=[],
+        initial=100_000.0,
+        period_start=date(2024, 1, 1),
+        period_end=date(2024, 12, 31),
+    )
+    assert all(ts <= pd.Timestamp("2024-12-31", tz="UTC") + pd.Timedelta(days=1) for ts in series.index)
+
+
+def test_ledger_final_equity_equals_initial_plus_net_profit() -> None:
+    from app.backtesting.walk_forward.accounting import (
+        assert_costs_not_double_counted,
+        assert_ledger_invariant,
+        broker_equivalent_from_ledger,
+        ledger_final_equity,
+        sum_slippage,
+    )
+    from app.backtesting.walk_forward.equity import canonical_equity_series
+
+    trades = [
+        _closed("RELIANCE", datetime(2022, 11, 4, tzinfo=timezone.utc), -2947.475357),
+        _closed("RELIANCE", datetime(2024, 3, 26, tzinfo=timezone.utc), -1084.586279),
+        _closed("RELIANCE", datetime(2024, 4, 26, tzinfo=timezone.utc), -2691.866123),
+    ]
+    trades[0] = trades[0].model_copy(
+        update={"gross_profit": -2798.394738, "brokerage": 55.905486, "slippage": 93.175133},
+    )
+    trades[1] = trades[1].model_copy(
+        update={"gross_profit": -938.597513, "brokerage": 54.745867, "slippage": 91.242899},
+    )
+    trades[2] = trades[2].model_copy(
+        update={"gross_profit": -2548.130233, "brokerage": 53.901189, "slippage": 89.834701},
+    )
+    initial = 100_000.0
+    assert_costs_not_double_counted(trades)
+    expected = ledger_final_equity(initial, trades)
+    assert expected == pytest.approx(93_276.072241, rel=0, abs=1e-3)
+    series = canonical_equity_series(
+        trades,
+        initial=initial,
+        period_start=date(2022, 1, 1),
+        period_end=date(2025, 12, 31),
+    )
+    assert float(series.iloc[-1]) == pytest.approx(expected, rel=0, abs=1e-6)
+    assert_ledger_invariant(initial=initial, trades=trades, final_equity=float(series.iloc[-1]))
+    broker_equiv = broker_equivalent_from_ledger(trades, initial)
+    assert broker_equiv - expected == pytest.approx(sum_slippage(trades), rel=0, abs=1e-3)
+
+
+def test_combined_vs_mean_window_return_semantics() -> None:
+    market, features, frames = _ports(40)
+    start = frames["RELIANCE"]["date"].min().date()
+    end = frames["RELIANCE"]["date"].max().date()
+    result = WalkForwardEngine(
+        _cfg(data_start=start, data_end=end, step_days=20),
+        selector=_Scripted(pnl_by_year={2020: 1000.0, 2021: -500.0}).selector,
+        runner=_Scripted(pnl_by_year={2020: 1000.0, 2021: -500.0}).runner,
+    ).run(symbols=["RELIANCE"], market_data=market, features=features)
+    assert result.combined_oos_return == pytest.approx(result.oos_return)
+    if len(result.windows) > 1:
+        assert result.mean_window_oos_return != result.combined_oos_return
+
+
+def test_walk_forward_ledger_invariant_on_engine_run() -> None:
+    market, features, frames = _ports(40)
+    start = frames["RELIANCE"]["date"].min().date()
+    end = frames["RELIANCE"]["date"].max().date()
+    result = WalkForwardEngine(
+        _cfg(data_start=start, data_end=end),
+        selector=_Scripted().selector,
+        runner=_Scripted().runner,
+    ).run(symbols=["RELIANCE"], market_data=market, features=features)
+    net_sum = sum(float(t.net_profit) for t in result.oos_trades)
+    assert result.final_oos_equity == pytest.approx(result.initial_capital + net_sum, rel=0, abs=1e-4)
+    assert result.combined_oos_return == pytest.approx(
+        (result.final_oos_equity - result.initial_capital) / result.initial_capital,
+        rel=0,
+        abs=1e-9,
+    )
+
+
+def test_minimum_training_trades_filter_uses_train_only() -> None:
+    market, features, frames = _ports(40)
+    train_end = frames["RELIANCE"]["date"].iloc[18].date()
+    cfg = _cfg(
+        search=_search(ema_pair_presets=("9_21", "12_26")),
+        minimum_training_trades=5,
+    )
+    _chosen, metrics, _n, _used, diagnostic = select_on_train(
+        symbol="RELIANCE",
+        wf_config=cfg,
+        train_start=frames["RELIANCE"]["date"].iloc[0].date(),
+        train_end=train_end,
+        market_data=market,
+        features=features,
+        initial_capital=100_000.0,
+    )
+    assert diagnostic.minimum_training_trades == 5
+    assert diagnostic.candidates_evaluated >= 1
+    assert diagnostic.eligible_count == 0 or metrics.trade_count >= 5
+
+
+def test_sharpe_methodology_documented() -> None:
+    market, features, frames = _ports(40)
+    start = frames["RELIANCE"]["date"].min().date()
+    end = frames["RELIANCE"]["date"].max().date()
+    result = WalkForwardEngine(
+        _cfg(data_start=start, data_end=end),
+        selector=_Scripted().selector,
+        runner=_Scripted().runner,
+    ).run(symbols=["RELIANCE"], market_data=market, features=features)
+    assert result.oos_sharpe_methodology == "canonical_equity_step_returns"
+    assert "equity" in result.oos_sharpe_methodology

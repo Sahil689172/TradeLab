@@ -12,30 +12,78 @@ from app.backtesting.order_execution.schemas import ClosedTradeRecord
 from app.backtesting.walk_forward.schemas import (
     CandidateMetrics,
     CapitalMode,
+    CoverageStatus,
+    DegradationLabel,
     DegradationReport,
+    MetricStatus,
     ParameterStability,
     WindowResult,
 )
 
 
-def degradation(train: CandidateMetrics, oos: CandidateMetrics) -> DegradationReport:
+def mean_window_return(windows: Sequence[WindowResult], *, train: bool = False) -> float:
+    if not windows:
+        return 0.0
+    values = [row.train.return_pct if train else row.oos.return_pct for row in windows]
+    return float(sum(values) / len(values))
+
+
+def degradation(
+    train: CandidateMetrics,
+    oos: CandidateMetrics,
+    *,
+    oos_trade_count: int = 0,
+) -> DegradationReport:
+    sample_flag = "INSUFFICIENT_OOS_SAMPLE" if oos_trade_count < 5 else ""
+    oos_sharpe_status = (
+        MetricStatus.NO_TRADES
+        if oos_trade_count == 0
+        else MetricStatus.INSUFFICIENT_SAMPLE
+        if oos_trade_count < 2
+        else MetricStatus.LOW_SAMPLE
+        if oos_trade_count < 5
+        else MetricStatus.VALID
+    )
+    oos_sharpe = oos.sharpe if oos_sharpe_status in (MetricStatus.VALID, MetricStatus.LOW_SAMPLE) else None
+    oos_win_rate_status = MetricStatus.NO_TRADES if oos_trade_count == 0 else MetricStatus.LOW_SAMPLE if oos_trade_count < 5 else MetricStatus.VALID
+    oos_win_rate = oos.win_rate if oos_trade_count > 0 else None
+    has_wins = oos_trade_count > 0 and oos.gross_profit > 0
+    pf_status = (
+        MetricStatus.NO_TRADES
+        if oos_trade_count == 0
+        else MetricStatus.NO_WINNING_TRADES
+        if not has_wins
+        else MetricStatus.LOW_SAMPLE
+        if oos_trade_count < 5
+        else MetricStatus.VALID
+    )
+    oos_pf = oos.profit_factor if pf_status in (MetricStatus.VALID, MetricStatus.LOW_SAMPLE) else None
     return DegradationReport(
+        label=DegradationLabel.DESCRIPTIVE_DIAGNOSTIC,
         train_return=train.return_pct,
         oos_return=oos.return_pct,
         return_ratio=_ratio(oos.return_pct, train.return_pct),
         return_degradation_pct=_degrade(train.return_pct, oos.return_pct),
         train_sharpe=train.sharpe,
-        oos_sharpe=oos.sharpe,
-        sharpe_ratio=_ratio(oos.sharpe, train.sharpe),
-        sharpe_degradation_pct=_degrade(train.sharpe, oos.sharpe),
+        oos_sharpe=oos_sharpe,
+        oos_sharpe_raw=oos.sharpe,
+        oos_sharpe_status=oos_sharpe_status,
+        sharpe_ratio=_ratio(oos.sharpe, train.sharpe) if oos_sharpe is not None else None,
+        sharpe_degradation_pct=_degrade(train.sharpe, oos.sharpe) if oos_sharpe is not None else None,
         train_win_rate=train.win_rate,
-        oos_win_rate=oos.win_rate,
-        win_rate_ratio=_ratio(oos.win_rate, train.win_rate),
-        win_rate_degradation_pct=_degrade(train.win_rate, oos.win_rate),
+        oos_win_rate=oos_win_rate,
+        oos_win_rate_raw=oos.win_rate if oos_trade_count > 0 else None,
+        oos_win_rate_status=oos_win_rate_status,
+        win_rate_ratio=_ratio(oos.win_rate, train.win_rate) if oos_win_rate is not None else None,
+        win_rate_degradation_pct=_degrade(train.win_rate, oos.win_rate) if oos_win_rate is not None else None,
         train_profit_factor=train.profit_factor,
-        oos_profit_factor=oos.profit_factor,
-        profit_factor_ratio=_ratio(oos.profit_factor, train.profit_factor),
-        profit_factor_degradation_pct=_degrade(train.profit_factor, oos.profit_factor),
+        oos_profit_factor=oos_pf,
+        oos_profit_factor_raw=oos.profit_factor if oos_trade_count > 0 else None,
+        oos_profit_factor_status=pf_status,
+        profit_factor_ratio=_ratio(oos.profit_factor, train.profit_factor) if oos_pf is not None else None,
+        profit_factor_degradation_pct=_degrade(train.profit_factor, oos.profit_factor) if oos_pf is not None else None,
+        oos_trade_count=oos_trade_count,
+        sample_flag=sample_flag,
     )
 
 
@@ -67,12 +115,35 @@ def parameter_stability(windows: Sequence[WindowResult]) -> ParameterStability:
     most = max(freq, key=freq.get) if freq else ""
     denom = max(len(history) - 1, 1)
     score = 1.0 - (changes / denom) if history else 0.0
+    oos_trades = sum(w.oos_trade_count for w in windows)
+    unique = len(freq)
+    if oos_trades == 0:
+        coverage = CoverageStatus.NO_OOS_TRADES
+        interpretation = "STABLE CONFIGURATION, BUT NO OOS TRADE EVIDENCE" if score >= 0.999 else (
+            "PARAMETER CHANGES OBSERVED WITH NO OOS TRADE EVIDENCE"
+        )
+    elif oos_trades < 5:
+        coverage = CoverageStatus.LOW_COVERAGE
+        interpretation = (
+            f"Stability score {score:.3f} with only {oos_trades} OOS trade(s); "
+            "not evidence of OOS robustness."
+        )
+    else:
+        coverage = CoverageStatus.SUFFICIENT
+        interpretation = (
+            f"Stability score {score:.3f} across {len(windows)} window(s) with {oos_trades} OOS trade(s)."
+        )
     return ParameterStability(
         history=history,
         frequency=freq,
         changes=changes,
         most_frequent=most,
         stability_score=float(score),
+        unique_config_count=unique,
+        window_count=len(windows),
+        oos_trade_count=oos_trades,
+        coverage_status=coverage,
+        interpretation=interpretation,
     )
 
 
