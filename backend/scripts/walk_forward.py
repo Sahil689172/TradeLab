@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""A5.9 walk-forward / out-of-sample validation.
+"""A5.9 / A5.10 walk-forward / out-of-sample validation.
 
 Windows CMD examples (run from the repo root):
 
     .venv\\Scripts\\python.exe backend\\scripts\\walk_forward.py --symbol RELIANCE --train-years 5 --test-years 1 --step-years 1 --initial-capital 100000 --strategy ema_professional --seed 42 --no-monte-carlo --output backend\\data\\walk_forward\\reliance
 
-    .venv\\Scripts\\python.exe backend\\scripts\\walk_forward.py --symbol RELIANCE --train-years 5 --test-years 1 --step-years 1 --initial-capital 500 --strategy ema_professional --seed 42 --no-monte-carlo --output backend\\data\\walk_forward\\reliance_500
+    .venv\\Scripts\\python.exe backend\\scripts\\walk_forward.py --symbols RELIANCE,TCS,INFY,HDFCBANK,ICICIBANK --train-years 5 --test-years 1 --step-years 1 --initial-capital 1000000 --strategy ema_professional --seed 42 --no-monte-carlo --output backend\\data\\walk_forward\\multi_symbol
 
 Walk-forward does not prove future profitability.
 """
@@ -46,6 +46,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--symbols",
         default=None,
         help="Comma-separated symbols, e.g. RELIANCE,TCS,HDFCBANK",
+    )
+    parser.add_argument(
+        "--symbols-file",
+        default=None,
+        help="Path to a file with one symbol per line or comma-separated symbols",
     )
     parser.add_argument(
         "--universe",
@@ -123,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
         print(message, flush=True)
 
     args = parse_args(argv)
-    emit("TradeLab walk-forward (A5.9) — progress prints per window. Not a forecast.")
+    emit("TradeLab walk-forward (A5.9/A5.10) — progress prints per window. Not a forecast.")
     settings = get_settings()
     storage_dir = Path(args.storage_dir) if args.storage_dir else Path(settings.parquet_storage_dir)
     symbols = _resolve_symbols(args, storage_dir)
@@ -192,6 +197,15 @@ def _resolve_symbols(args: argparse.Namespace, storage_dir: Path) -> list[str]:
         collected.extend(args.symbol_flags)
     if args.symbols:
         collected.extend(part.strip() for part in str(args.symbols).split(",") if part.strip())
+    if args.symbols_file:
+        path = Path(args.symbols_file)
+        if not path.is_file():
+            raise FileNotFoundError(f"symbols file not found: {path}")
+        raw = path.read_text(encoding="utf-8")
+        for line in raw.replace(",", "\n").splitlines():
+            token = line.strip()
+            if token and not token.startswith("#"):
+                collected.append(token)
     if args.universe:
         return resolve_universe_symbols(storage_dir, symbols=["all"])
     if collected:

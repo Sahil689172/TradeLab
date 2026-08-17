@@ -1,4 +1,4 @@
-"""Walk-forward / out-of-sample validation (Phase A5.9).
+"""Walk-forward / out-of-sample validation (Phase A5.9 / A5.10).
 
 Orchestrates TRAIN → freeze → TEST → roll using A5.1 replay and A5.2 execution.
 Does not rewrite A5.1–A5.8. Combined OOS concatenates test-period trades only.
@@ -16,6 +16,7 @@ from app.backtesting.walk_forward.export import write_outputs
 from app.backtesting.walk_forward.isolation import DateCappedFeatures, DateCappedMarket, cap_frame
 from app.backtesting.walk_forward.report import format_markdown_report
 from app.backtesting.walk_forward.schemas import (
+    AllocationModel,
     CapitalMode,
     SearchSpace,
     SelectionScope,
@@ -25,6 +26,7 @@ from app.backtesting.walk_forward.schemas import (
 from app.backtesting.walk_forward.windows import generate_windows
 
 __all__ = [
+    "AllocationModel",
     "CapitalMode",
     "DateCappedFeatures",
     "DateCappedMarket",

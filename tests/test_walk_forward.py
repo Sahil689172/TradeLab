@@ -310,6 +310,62 @@ class _Scripted:
         )
 
 
+class _PerSymbolScripted(_Scripted):
+    """Scripted runner with symbol-specific P&L maps."""
+
+    def __init__(
+        self,
+        pnl_by_symbol: dict[str, float] | None = None,
+        pnl_by_year: dict[int, float] | None = None,
+    ) -> None:
+        super().__init__(pnl_by_year=pnl_by_year)
+        self.pnl_by_symbol = pnl_by_symbol or {}
+        self.select_keys: dict[str, str] = {}
+
+    def selector(self, *, symbol: str, train_start: date, train_end: date, **kwargs: object):
+        cfg = _frozen(symbol)
+        key = config_key(cfg)
+        self.select_keys[symbol] = key
+        self.selects.append((symbol, train_start, train_end))
+        return cfg, _metrics(key=key), 2, train_end, _train_diagnostic()
+
+    def runner(
+        self,
+        *,
+        symbol: str,
+        strategy_config: EMATrendConfig,
+        start: date,
+        end: date,
+        initial_capital: float,
+        **kwargs: object,
+    ) -> PeriodRun:
+        if symbol in self.pnl_by_symbol:
+            pnl = float(self.pnl_by_symbol[symbol])
+        else:
+            pnl = float(self.pnl_by_year.get(start.year, 1000.0))
+        entry = datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc)
+        trade = _closed(symbol, entry, pnl)
+        key = config_key(strategy_config)
+        self.calls.append((symbol, start, end, initial_capital, key))
+        equity = canonical_equity_series(
+            [trade],
+            initial=initial_capital,
+            period_start=start,
+            period_end=end,
+        )
+        metrics = _metrics(key=key, ret=pnl / initial_capital if initial_capital else 0.0, net=pnl, trades=1)
+        return PeriodRun(
+            trades=[trade],
+            equity=equity,
+            metrics=metrics,
+            used_max=end,
+            frozen_key=key,
+            attribution=ExecutionAttribution(completed_trades=1),
+            requested_strategy="ema_professional",
+            execution_engine="ema_trend",
+        )
+
+
 def _ports(n: int = 50, symbols: tuple[str, ...] = ("RELIANCE",), **ohlcv_kwargs: object):
     frames = {name: _ohlcv(n, **ohlcv_kwargs) for name in symbols}
     feats = {name: _features(frames[name]) for name in symbols}
@@ -1251,3 +1307,187 @@ def test_sharpe_methodology_documented() -> None:
     ).run(symbols=["RELIANCE"], market_data=market, features=features)
     assert result.oos_sharpe_methodology == "canonical_equity_step_returns"
     assert "equity" in result.oos_sharpe_methodology
+
+
+def test_single_symbol_unchanged_no_portfolio_layer() -> None:
+    market, features, frames = _ports(40)
+    start = frames["RELIANCE"]["date"].min().date()
+    end = frames["RELIANCE"]["date"].max().date()
+    result = WalkForwardEngine(
+        _cfg(data_start=start, data_end=end, initial_capital=100_000.0),
+        selector=_Scripted().selector,
+        runner=_Scripted().runner,
+    ).run(symbols=["RELIANCE"], market_data=market, features=features)
+    assert result.is_multi_symbol is False
+    assert result.symbol_allocation_capital is None
+    assert result.symbol_results == []
+    assert result.portfolio is None
+    assert result.final_oos_equity == pytest.approx(100_000.0 + result.oos_net_profit, rel=0, abs=1e-4)
+
+
+def test_multi_symbol_equal_allocation_deterministic() -> None:
+    market, features, frames = _ports(40, symbols=("RELIANCE", "TCS"))
+    start = frames["RELIANCE"]["date"].min().date()
+    end = frames["RELIANCE"]["date"].max().date()
+    total = 100_000.0
+    scripted = _Scripted()
+    result = WalkForwardEngine(
+        _cfg(data_start=start, data_end=end, step_days=20, initial_capital=total),
+        selector=scripted.selector,
+        runner=scripted.runner,
+    ).run(symbols=["RELIANCE", "TCS"], market_data=market, features=features)
+    assert result.is_multi_symbol
+    assert result.symbol_allocation_capital == pytest.approx(total / 2, rel=0, abs=1e-6)
+    first_reliance = next(row for row in result.windows if row.symbol == "RELIANCE")
+    first_tcs = next(row for row in result.windows if row.symbol == "TCS")
+    assert first_reliance.starting_capital == pytest.approx(total / 2, rel=0, abs=1e-6)
+    assert first_tcs.starting_capital == pytest.approx(total / 2, rel=0, abs=1e-6)
+    assert len(result.symbol_results) == 2
+
+
+def test_multi_symbol_portfolio_return_from_summed_equity() -> None:
+    market, features, frames = _ports(40, symbols=("RELIANCE", "TCS"))
+    start = frames["RELIANCE"]["date"].min().date()
+    end = frames["RELIANCE"]["date"].max().date()
+    scripted = _PerSymbolScripted(pnl_by_symbol={"RELIANCE": 5000.0, "TCS": 500.0})
+    result = WalkForwardEngine(
+        _cfg(data_start=start, data_end=end, step_days=20, initial_capital=100_000.0),
+        selector=scripted.selector,
+        runner=scripted.runner,
+    ).run(symbols=["RELIANCE", "TCS"], market_data=market, features=features)
+    assert result.portfolio is not None
+    expected_return = (result.portfolio.final_equity - result.initial_capital) / result.initial_capital
+    assert result.portfolio.oos_return == pytest.approx(expected_return, rel=0, abs=1e-9)
+    assert result.combined_oos_return == pytest.approx(expected_return, rel=0, abs=1e-9)
+    assert result.portfolio.final_equity == pytest.approx(
+        sum(r.final_equity for r in result.symbol_results),
+        rel=0,
+        abs=1e-4,
+    )
+
+
+def test_multi_symbol_selection_isolated_per_symbol() -> None:
+    market, features, frames = _ports(40, symbols=("RELIANCE", "TCS"))
+    train_end = frames["RELIANCE"]["date"].iloc[18].date()
+    cfg = _cfg(search=_search(ema_pair_presets=("9_21", "12_26")), minimum_training_trades=5)
+    a, *_ = select_on_train(
+        symbol="RELIANCE",
+        wf_config=cfg,
+        train_start=frames["RELIANCE"]["date"].iloc[0].date(),
+        train_end=train_end,
+        market_data=market,
+        features=features,
+        initial_capital=50_000.0,
+    )
+    b, *_ = select_on_train(
+        symbol="TCS",
+        wf_config=cfg,
+        train_start=frames["TCS"]["date"].iloc[0].date(),
+        train_end=train_end,
+        market_data=market,
+        features=features,
+        initial_capital=50_000.0,
+    )
+    assert config_key(a) == config_key(b)
+
+
+def test_multi_symbol_oos_cannot_affect_other_symbol_selection() -> None:
+    market_a, features_a, frames = _ports(40, symbols=("RELIANCE", "TCS"))
+    train_end = frames["RELIANCE"]["date"].iloc[18].date()
+    poisoned = frames["TCS"].copy()
+    after = pd.to_datetime(poisoned["date"]).dt.date > train_end
+    poisoned.loc[after, "close"] *= 50.0
+    market_b = _StaticMarket({"RELIANCE": frames["RELIANCE"], "TCS": poisoned})
+    features_b = _StaticFeatures({"RELIANCE": _features(frames["RELIANCE"]), "TCS": _features(poisoned)})
+    cfg = _cfg(search=_search(ema_pair_presets=("9_21", "12_26")), minimum_training_trades=5)
+    rel_a, *_ = select_on_train(
+        symbol="RELIANCE",
+        wf_config=cfg,
+        train_start=frames["RELIANCE"]["date"].iloc[0].date(),
+        train_end=train_end,
+        market_data=market_a,
+        features=features_a,
+        initial_capital=50_000.0,
+    )
+    rel_b, *_ = select_on_train(
+        symbol="RELIANCE",
+        wf_config=cfg,
+        train_start=frames["RELIANCE"]["date"].iloc[0].date(),
+        train_end=train_end,
+        market_data=market_b,
+        features=features_b,
+        initial_capital=50_000.0,
+    )
+    assert config_key(rel_a) == config_key(rel_b)
+
+
+def test_multi_symbol_only_oos_trades_in_portfolio_aggregation() -> None:
+    market, features, frames = _ports(40, symbols=("RELIANCE", "TCS"))
+    start = frames["RELIANCE"]["date"].min().date()
+    end = frames["RELIANCE"]["date"].max().date()
+    result = WalkForwardEngine(
+        _cfg(data_start=start, data_end=end, step_days=20),
+        selector=_Scripted().selector,
+        runner=_Scripted().runner,
+    ).run(symbols=["RELIANCE", "TCS"], market_data=market, features=features)
+    assert result.portfolio is not None
+    assert result.oos_trade_count == len(result.oos_trades)
+    for trade in result.oos_trades:
+        matching = [row for row in result.windows if row.symbol == trade.symbol]
+        assert matching
+        assert any(row.window.test_start <= trade.entry_timestamp.date() <= row.window.test_end for row in matching)
+    assert result.portfolio.oos_trade_count == len(result.oos_trades)
+
+
+def test_multi_symbol_output_files(tmp_path: Path) -> None:
+    market, features, frames = _ports(40, symbols=("RELIANCE", "TCS"))
+    start = frames["RELIANCE"]["date"].min().date()
+    end = frames["RELIANCE"]["date"].max().date()
+    result = WalkForwardEngine(
+        _cfg(data_start=start, data_end=end, step_days=20, include_charts=False),
+        selector=_Scripted().selector,
+        runner=_Scripted().runner,
+    ).run(symbols=["RELIANCE", "TCS"], market_data=market, features=features)
+    paths = write_outputs(result, output_dir=tmp_path)
+    for name in (
+        "json",
+        "md",
+        "windows",
+        "oos_trades",
+        "symbol_metrics",
+        "portfolio_equity_curve",
+        "strategy_symbol_matrix",
+    ):
+        assert paths[name].exists()
+        assert paths[name].stat().st_size > 0
+    md = paths["md"].read_text(encoding="utf-8")
+    assert "PORTFOLIO OOS" in md
+    assert "PER-SYMBOL OOS" in md
+
+
+def test_symbols_file_cli(tmp_path: Path) -> None:
+    frame_r = _ohlcv(40)
+    frame_t = _ohlcv(40, price=200.0)
+    frame_r.to_parquet(tmp_path / "RELIANCE.parquet", engine="pyarrow")
+    frame_t.to_parquet(tmp_path / "TCS.parquet", engine="pyarrow")
+    symbols_file = tmp_path / "symbols.txt"
+    symbols_file.write_text("RELIANCE\nTCS\n", encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(
+        "walk_forward_cli",
+        Path("backend/scripts/walk_forward.py"),
+    )
+    assert spec is not None and spec.loader is not None
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    symbols = cli._resolve_symbols(
+        cli.parse_args(
+            [
+                "--symbols-file",
+                str(symbols_file),
+                "--storage-dir",
+                str(tmp_path),
+            ],
+        ),
+        tmp_path,
+    )
+    assert symbols == ["RELIANCE", "TCS"]

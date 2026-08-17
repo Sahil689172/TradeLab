@@ -24,25 +24,34 @@ def write_charts(result: WalkForwardResult, *, output_dir: Path) -> dict[str, Pa
     oos_end = combined_oos_end(result.windows)
     assert_market_timestamps_only(equity, max_date=oos_end, generated_at=result.generated_at)
     if len(equity):
-        path = output_dir / "oos_equity_curve.png"
+        path = output_dir / ("portfolio_equity_curve.png" if result.is_multi_symbol else "oos_equity_curve.png")
         fig, ax = plt.subplots(figsize=(9, 4))
+        title = (
+            "Portfolio OOS equity (sum of symbol books)"
+            if result.is_multi_symbol
+            else "Combined OOS equity (market timestamps only)"
+        )
         ax.plot(equity.index, equity.values, color="#1f4e79")
-        ax.set_title("Combined OOS equity (market timestamps only)")
+        ax.set_title(title)
         ax.set_ylabel("Equity")
         fig.tight_layout()
         fig.savefig(path, dpi=120)
         plt.close(fig)
-        paths["oos_equity"] = path
-        dd_path = output_dir / "oos_drawdown.png"
+        paths["portfolio_equity" if result.is_multi_symbol else "oos_equity"] = path
+        dd_path = output_dir / ("portfolio_drawdown.png" if result.is_multi_symbol else "oos_drawdown.png")
         peak = equity.cummax()
         dd = (peak - equity) / peak.replace(0, pd.NA)
         fig, ax = plt.subplots(figsize=(9, 4))
         ax.fill_between(dd.index, dd.fillna(0.0).values, color="#9c2a2a", alpha=0.7)
-        ax.set_title("OOS drawdown (canonical equity series)")
+        ax.set_title(
+            "Portfolio drawdown (summed equity)"
+            if result.is_multi_symbol
+            else "OOS drawdown (canonical equity series)"
+        )
         fig.tight_layout()
         fig.savefig(dd_path, dpi=120)
         plt.close(fig)
-        paths["oos_drawdown"] = dd_path
+        paths["portfolio_drawdown" if result.is_multi_symbol else "oos_drawdown"] = dd_path
         plotted_dd, _, _ = max_drawdown(equity.tolist())
         if abs(plotted_dd - result.oos_max_drawdown) > 1e-6:
             raise AssertionError("plotted max drawdown does not match reported OOS max drawdown")

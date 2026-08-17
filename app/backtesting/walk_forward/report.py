@@ -30,13 +30,25 @@ def format_markdown_report(result: WalkForwardResult) -> str:
         f"Capital mode: {result.capital_mode.value}",
         f"Initial capital: ₹{result.initial_capital:,.2f}",
         f"Selection scope: {cfg.selection_scope.value}",
-        "",
-        "WINDOW SUMMARY",
-        "---------------",
-        "",
-        "Window | Symbol | Train | Test | Selected Config | Train Return | OOS Return | OOS DD | OOS Trades",
-        "------ | ------ | ----- | ---- | ---------------- | ------------ | ---------- | ------ | ----------",
     ]
+    if result.is_multi_symbol:
+        lines.extend(
+            [
+                f"Allocation model: {result.allocation_model.value}",
+                f"Symbol allocation: ₹{result.symbol_allocation_capital:,.2f} × {len(result.symbols)} symbols",
+                result.allocation_note,
+            ],
+        )
+    lines.extend(
+        [
+            "",
+            "WINDOW SUMMARY",
+            "---------------",
+            "",
+            "Window | Symbol | Train | Test | Selected Config | Train Return | OOS Return | OOS DD | OOS Trades",
+            "------ | ------ | ----- | ---- | ---------------- | ------------ | ---------- | ------ | ----------",
+        ],
+    )
     for row in result.windows:
         w = row.window
         lines.append(
@@ -217,6 +229,54 @@ def format_markdown_report(result: WalkForwardResult) -> str:
         lines.append(f"Median simulated return: {_pct(result.monte_carlo_median_return)}")
     else:
         lines.append("Monte Carlo was not requested or had no OOS trades.")
+    if result.is_multi_symbol and result.portfolio is not None:
+        port = result.portfolio
+        lines.extend(
+            [
+                "",
+                "PORTFOLIO OOS (SUMMED EQUITY — NOT AVERAGED RETURNS)",
+                "---------------------------------------------------",
+                f"Symbols: {port.symbol_count}",
+                f"Allocation: {port.allocation_model.value} (₹{port.symbol_allocation_capital:,.2f}/symbol)",
+                f"Portfolio return: {_pct(port.oos_return)}",
+                f"Portfolio CAGR: {_pct(port.oos_cagr) if port.oos_cagr is not None else 'n/a'}",
+                f"Portfolio Sharpe: {_metric(port.oos_sharpe, port.oos_sharpe_status)}",
+                f"Portfolio max DD: {_pct(port.oos_max_drawdown)}",
+                f"Portfolio OOS trades: {port.oos_trade_count}",
+                f"Historical OOS trades: {port.historical_oos_trades}",
+                f"Net P&L: ₹{port.oos_net_profit:,.2f}",
+                f"Final equity: ₹{port.final_equity:,.2f}",
+                f"Profitable symbols: {_pct(port.profitable_symbol_pct)}",
+                f"Profitable windows: {_pct(port.profitable_window_pct)}",
+                f"Best symbol: {port.best_symbol or 'n/a'}",
+                f"Worst symbol: {port.worst_symbol or 'n/a'}",
+                f"Portfolio verdict: {port.verdict.value}",
+                "",
+                "PER-SYMBOL OOS",
+                "--------------",
+                "Symbol | Trades | Return | Final equity | Verdict",
+                "------ | ------ | ------ | ------------ | -------",
+            ],
+        )
+        for sym in result.symbol_results:
+            lines.append(
+                f"{sym.symbol} | {sym.oos_trade_count} | {_pct(sym.oos_return)} | "
+                f"₹{sym.final_equity:,.2f} | {sym.verdict.value}",
+            )
+        if result.strategy_symbol_matrix:
+            lines.extend(
+                [
+                    "",
+                    "STRATEGY × SYMBOL MATRIX",
+                    "------------------------",
+                    "Strategy | Symbol | OOS return | OOS trades",
+                    "-------- | ------ | ---------- | ----------",
+                ],
+            )
+            for cell in result.strategy_symbol_matrix:
+                lines.append(
+                    f"{cell.strategy} | {cell.symbol} | {_pct(cell.oos_return)} | {cell.oos_trade_count}",
+                )
     lines.extend(
         [
             "",

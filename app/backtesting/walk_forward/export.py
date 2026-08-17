@@ -55,6 +55,16 @@ def write_outputs(
     }
     if result.config.include_charts:
         paths.update(write_charts(result, output_dir=output_dir))
+    if result.is_multi_symbol:
+        symbol_path = output_dir / "symbol_metrics.csv"
+        symbol_path.write_text(_symbol_metrics_csv(result), encoding="utf-8")
+        paths["symbol_metrics"] = symbol_path
+        portfolio_equity_path = output_dir / "portfolio_equity_curve.csv"
+        portfolio_equity_path.write_text(_portfolio_equity_csv(result), encoding="utf-8")
+        paths["portfolio_equity_curve"] = portfolio_equity_path
+        matrix_path = output_dir / "strategy_symbol_matrix.csv"
+        matrix_path.write_text(_strategy_symbol_matrix_csv(result), encoding="utf-8")
+        paths["strategy_symbol_matrix"] = matrix_path
     return paths
 
 
@@ -153,6 +163,40 @@ def _equity_csv(result: WalkForwardResult) -> str:
     lines = ["timestamp,equity"]
     for point in result.equity_curve:
         lines.append(f"{point.timestamp.isoformat()},{point.equity}")
+    return "\n".join(lines) + "\n"
+
+
+def _portfolio_equity_csv(result: WalkForwardResult) -> str:
+    lines = ["timestamp,equity"]
+    for point in result.portfolio_equity_curve:
+        lines.append(f"{point.timestamp.isoformat()},{point.equity}")
+    return "\n".join(lines) + "\n"
+
+
+def _symbol_metrics_csv(result: WalkForwardResult) -> str:
+    lines = [
+        "symbol,initial_capital,final_equity,oos_trades,oos_return,oos_cagr,oos_sharpe,oos_sortino,"
+        "max_drawdown,win_rate,profit_factor,gross_profit,net_profit,total_costs,rejected,"
+        "sample_quality,verdict",
+    ]
+    for row in result.symbol_results:
+        lines.append(
+            f"{row.symbol},{row.initial_capital},{row.final_equity},{row.oos_trade_count},"
+            f"{row.oos_return},{row.oos_cagr if row.oos_cagr is not None else ''},"
+            f"{row.oos_sharpe if row.oos_sharpe is not None else ''},"
+            f"{row.oos_sortino if row.oos_sortino is not None else ''},"
+            f"{row.oos_max_drawdown},{row.oos_win_rate if row.oos_win_rate is not None else ''},"
+            f"{row.oos_profit_factor if row.oos_profit_factor is not None else ''},"
+            f"{row.oos_gross_profit},{row.oos_net_profit},{row.oos_total_costs},"
+            f"{row.oos_rejected_count},{row.sample_quality.value},{row.verdict.value}",
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _strategy_symbol_matrix_csv(result: WalkForwardResult) -> str:
+    lines = ["strategy,symbol,oos_return,oos_trade_count"]
+    for cell in result.strategy_symbol_matrix:
+        lines.append(f"{_csv(cell.strategy)},{cell.symbol},{cell.oos_return},{cell.oos_trade_count}")
     return "\n".join(lines) + "\n"
 
 

@@ -39,13 +39,20 @@ from app.backtesting.walk_forward.equity import (
     combined_oos_end,
     sanitize_equity_series,
 )
-from app.backtesting.walk_forward.sample_metrics import build_sample_aware_performance
+from app.backtesting.walk_forward.portfolio import (
+    build_portfolio_summary,
+    build_strategy_symbol_matrix,
+    build_symbol_result,
+    sum_symbol_equity_curves,
+    symbol_allocation_capital,
+)
 from app.backtesting.walk_forward.exceptions import WalkForwardConfigError
 from app.backtesting.walk_forward.execution import PeriodRun, run_period
 from app.backtesting.walk_forward.isolation import CachedFeatures, CachedMarket, frame_max_date, leakage_from_windows
 from app.backtesting.walk_forward.optimizer import select_joint, select_on_train
 from app.backtesting.walk_forward.schemas import (
     LIMITATION,
+    PORTFOLIO_ALLOCATION_NOTE,
     CapitalMode,
     EquityPoint,
     ExecutionAttribution,
@@ -56,6 +63,7 @@ from app.backtesting.walk_forward.schemas import (
     WalkForwardResult,
     WindowResult,
 )
+from app.backtesting.walk_forward.sample_metrics import build_sample_aware_performance
 from app.backtesting.walk_forward.windows import generate_windows
 
 
@@ -99,7 +107,13 @@ class WalkForwardEngine:
         window_results: list[WindowResult] = []
         oos_trades: list[ClosedTradeRecord] = []
         equity_segments: list[pd.Series] = []
-        capital = float(self._config.initial_capital)
+        symbol_equity_segments: dict[str, list[pd.Series]] = {symbol: [] for symbol in names}
+        symbol_capital = symbol_allocation_capital(
+            float(self._config.initial_capital),
+            len(names),
+            allocation_model=self._config.allocation_model,
+        )
+        capital_by_symbol: dict[str, float] = {symbol: symbol_capital for symbol in names}
         rejected_total = 0
         attributions: list[ExecutionAttribution] = []
         attribution_by_symbol: dict[str, list[ExecutionAttribution]] = {}
@@ -109,7 +123,8 @@ class WalkForwardEngine:
         self._progress(
             f"Data {data_start.isoformat()} → {data_end.isoformat()} | "
             f"{len(windows)} window(s) | {n_cand_hint} train candidate(s) | "
-            f"{len(names)} symbol(s)",
+            f"{len(names)} symbol(s) | allocation={self._config.allocation_model.value} "
+            f"₹{symbol_capital:,.2f}/symbol",
         )
         if not windows:
             self._progress("No complete train/test windows fit this date range.")
@@ -127,7 +142,7 @@ class WalkForwardEngine:
                     train_end=window.train_end,
                     market_data=market_data,
                     features=features,
-                    initial_capital=self._config.initial_capital,
+                    initial_capital=symbol_capital,
                     runner=self._runner,
                     **extra,
                 )
@@ -148,7 +163,7 @@ class WalkForwardEngine:
                         train_end=window.train_end,
                         market_data=market_data,
                         features=features,
-                        initial_capital=self._config.initial_capital,
+                        initial_capital=symbol_capital,
                         runner=self._runner,
                         **extra,
                     )
@@ -163,7 +178,7 @@ class WalkForwardEngine:
                         end=window.train_end,
                         market_data=market_data,
                         features=features,
-                        initial_capital=self._config.initial_capital,
+                        initial_capital=symbol_capital,
                         **extra,
                     )
                     train_metrics = train_period.metrics
@@ -171,9 +186,9 @@ class WalkForwardEngine:
                 if train_max > window.train_end:
                     leakage = _fail_leakage(leakage, f"{symbol} train saw {train_max}")
                 start_cap = (
-                    capital
+                    capital_by_symbol[symbol]
                     if self._config.capital_mode is CapitalMode.COMPOUNDED
-                    else self._config.initial_capital
+                    else symbol_capital
                 )
                 self._progress(
                     f"Window {window.window_id}/{len(windows)} {symbol} "
@@ -220,22 +235,63 @@ class WalkForwardEngine:
                 )
                 oos_trades.extend(period.trades)
                 equity_segments.append(period.equity)
+                symbol_equity_segments[symbol].append(period.equity)
                 rejected_total += period.rejected_count
                 if period.attribution is not None:
                     attributions.append(period.attribution)
                     attribution_by_symbol.setdefault(symbol, []).append(period.attribution)
                 if self._config.capital_mode is CapitalMode.COMPOUNDED:
-                    capital = ending
+                    capital_by_symbol[symbol] = ending
                 self._progress(
                     f"Window {window.window_id}/{len(windows)} {symbol} done | "
                     f"OOS trades={len(period.trades)} return={period.metrics.return_pct:.2%}",
                 )
 
-        oos_equity = stitch_equity(
-            equity_segments,
-            initial=self._config.initial_capital,
-            mode=self._config.capital_mode,
-        )
+        is_multi = len(names) > 1
+        symbol_results = []
+        portfolio_equity_series: pd.Series | None = None
+        portfolio_summary = None
+        strategy_matrix = []
+
+        if is_multi:
+            symbol_curves: list[pd.Series] = []
+            for symbol in names:
+                sym_result = build_symbol_result(
+                    symbol=symbol,
+                    windows=window_results,
+                    trades=oos_trades,
+                    equity_segments=symbol_equity_segments[symbol],
+                    symbol_capital=symbol_capital,
+                    config=self._config,
+                )
+                symbol_results.append(sym_result)
+                if sym_result.equity_curve:
+                    idx = [pd.Timestamp(p.timestamp) for p in sym_result.equity_curve]
+                    vals = [p.equity for p in sym_result.equity_curve]
+                    symbol_curves.append(pd.Series(vals, index=pd.DatetimeIndex(idx), dtype=float))
+            portfolio_equity_series = sum_symbol_equity_curves(
+                symbol_curves,
+                total_initial=float(self._config.initial_capital),
+            )
+            portfolio_summary = build_portfolio_summary(
+                symbol_results=symbol_results,
+                window_results=window_results,
+                trades=oos_trades,
+                portfolio_equity=portfolio_equity_series,
+                config=self._config,
+                symbol_capital=symbol_capital,
+            )
+            strategy_matrix = build_strategy_symbol_matrix(
+                strategy=self._config.strategy_alias,
+                symbol_results=symbol_results,
+            )
+            oos_equity = portfolio_equity_series
+        else:
+            oos_equity = stitch_equity(
+                equity_segments,
+                initial=self._config.initial_capital,
+                mode=self._config.capital_mode,
+            )
         oos_end = combined_oos_end(window_results)
         if oos_end is not None:
             cap = pd.Timestamp(datetime.combine(oos_end, time.max, tzinfo=timezone.utc))
@@ -304,6 +360,9 @@ class WalkForwardEngine:
         if self._config.include_portfolio_risk and oos_trades:
             PortfolioRiskEngine().run(oos_trades)
             warnings.append("A5.8 portfolio risk was run on combined OOS trades.")
+        if is_multi and portfolio_summary is not None:
+            quality = portfolio_summary.sample_quality
+            verdict = portfolio_summary.verdict
         if len(oos_trades) <= 4:
             warnings.append("INSUFFICIENT_EVIDENCE: OOS trade count is too small for a robustness claim.")
             verdict = MonteCarloVerdict.INSUFFICIENT_EVIDENCE
@@ -323,6 +382,16 @@ class WalkForwardEngine:
                 f"{self._config.minimum_training_trades}. "
                 "Minimum was NOT satisfied; train selection is diagnostic only."
             )
+        if is_multi:
+            warnings.append(
+                f"MULTI_SYMBOL allocation={self._config.allocation_model.value}: "
+                f"₹{symbol_capital:,.2f} per symbol × {len(names)} symbols. "
+                "Portfolio metrics use summed equity; symbol returns are not averaged."
+            )
+            warnings.append(
+                f"historical_oos_trades={len(oos_trades)} across {len(names)} symbols. "
+                "Adding symbols does not increase per-symbol historical observations."
+            )
 
         gross = float(perf.gross_profit)
         costs = float(perf.total_costs)
@@ -333,6 +402,12 @@ class WalkForwardEngine:
         from app.backtesting.evaluation.metrics import cagr
 
         oos_cagr = cagr(self._config.initial_capital, perf.final_equity, years) if years > 0 else None
+        portfolio_points = _equity_points(portfolio_equity_series) if is_multi and portfolio_equity_series is not None else []
+        oos_by_sym = (
+            {row.symbol: row.oos_return for row in symbol_results}
+            if is_multi and symbol_results
+            else oos_by_symbol(oos_trades, self._config.initial_capital)
+        )
         return WalkForwardResult(
             config=self._config,
             symbols=names,
@@ -386,13 +461,21 @@ class WalkForwardEngine:
             simulation_count=mc_sims,
             warnings=warnings,
             oos_by_year=oos_by_year(oos_trades, self._config.initial_capital),
-            oos_by_symbol=oos_by_symbol(oos_trades, self._config.initial_capital),
+            oos_by_symbol=oos_by_sym,
             oos_trades=oos_trades,
             equity_curve=_equity_points(oos_equity),
             oos_rejected_count=rejected_total,
             oos_attribution=oos_attribution,
             oos_attribution_by_symbol=oos_attribution_by_symbol,
             generated_at=generated_at,
+            is_multi_symbol=is_multi,
+            allocation_model=self._config.allocation_model,
+            allocation_note=PORTFOLIO_ALLOCATION_NOTE,
+            symbol_allocation_capital=symbol_capital if is_multi else None,
+            symbol_results=symbol_results,
+            portfolio=portfolio_summary,
+            portfolio_equity_curve=portfolio_points,
+            strategy_symbol_matrix=strategy_matrix,
         )
 
 

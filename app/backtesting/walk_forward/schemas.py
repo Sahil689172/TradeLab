@@ -73,6 +73,18 @@ class SelectionScope(str, Enum):
     JOINT = "joint"
 
 
+class AllocationModel(str, Enum):
+    """How total initial capital is split across symbols (A5.10)."""
+
+    EQUAL_WEIGHT = "equal_weight"
+    FULL_PER_SYMBOL = "full_per_symbol"
+
+
+PORTFOLIO_ALLOCATION_NOTE = (
+    "equal_weight: symbol_capital = total_initial_capital / symbol_count. "
+    "Each symbol runs an independent walk-forward book on its slice. "
+    "Portfolio equity is the sum of per-symbol equity curves (not an average of returns)."
+)
 class WalkForwardWindow(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -142,6 +154,10 @@ class WalkForwardConfig(BaseModel):
             "Training candidates with fewer completed trades are INELIGIBLE for "
             "selection. Default 5 matches walk-forward LOW_SAMPLE threshold."
         ),
+    )
+    allocation_model: AllocationModel = Field(
+        default=AllocationModel.EQUAL_WEIGHT,
+        description="Multi-symbol capital split. Single-symbol runs always use full initial_capital.",
     )
 
 
@@ -319,6 +335,80 @@ class LeakageReport(BaseModel):
     details: list[str] = Field(default_factory=list)
 
 
+class StrategySymbolCell(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    strategy: str
+    symbol: str
+    oos_return: float = 0.0
+    oos_trade_count: int = 0
+
+
+class SymbolWalkForwardResult(BaseModel):
+    """Per-symbol combined OOS summary (A5.10)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    symbol: str
+    initial_capital: float
+    final_equity: float
+    oos_trade_count: int = 0
+    oos_return: float = 0.0
+    oos_cagr: float | None = None
+    oos_sharpe: float | None = None
+    oos_sharpe_status: MetricStatus = MetricStatus.INSUFFICIENT_SAMPLE
+    oos_sortino: float | None = None
+    oos_sortino_status: MetricStatus = MetricStatus.INSUFFICIENT_SAMPLE
+    oos_max_drawdown: float = 0.0
+    oos_win_rate: float | None = None
+    oos_win_rate_status: MetricStatus = MetricStatus.NO_TRADES
+    oos_profit_factor: float | None = None
+    oos_profit_factor_status: MetricStatus = MetricStatus.NO_TRADES
+    oos_gross_profit: float = 0.0
+    oos_net_profit: float = 0.0
+    oos_total_costs: float = 0.0
+    oos_rejected_count: int = 0
+    window_count: int = 0
+    sample_quality: SampleQuality = SampleQuality.INVALID
+    verdict: MonteCarloVerdict = MonteCarloVerdict.INSUFFICIENT_EVIDENCE
+    equity_curve: list[EquityPoint] = Field(default_factory=list)
+
+
+class PortfolioWalkForwardSummary(BaseModel):
+    """Combined portfolio OOS summary — sum of symbol books, not averaged returns (A5.10)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    allocation_model: AllocationModel = AllocationModel.EQUAL_WEIGHT
+    allocation_note: str = PORTFOLIO_ALLOCATION_NOTE
+    symbol_count: int = 0
+    symbol_allocation_capital: float = 0.0
+    initial_capital: float = 0.0
+    final_equity: float = 0.0
+    oos_trade_count: int = 0
+    historical_oos_trades: int = 0
+    oos_return: float = 0.0
+    oos_cagr: float | None = None
+    oos_sharpe: float | None = None
+    oos_sharpe_status: MetricStatus = MetricStatus.INSUFFICIENT_SAMPLE
+    oos_sortino: float | None = None
+    oos_sortino_status: MetricStatus = MetricStatus.INSUFFICIENT_SAMPLE
+    oos_max_drawdown: float = 0.0
+    oos_win_rate: float | None = None
+    oos_win_rate_status: MetricStatus = MetricStatus.NO_TRADES
+    oos_profit_factor: float | None = None
+    oos_profit_factor_status: MetricStatus = MetricStatus.NO_TRADES
+    oos_gross_profit: float = 0.0
+    oos_net_profit: float = 0.0
+    oos_total_costs: float = 0.0
+    profitable_symbol_pct: float = 0.0
+    profitable_window_pct: float = 0.0
+    best_symbol: str = ""
+    worst_symbol: str = ""
+    sample_quality: SampleQuality = SampleQuality.INVALID
+    verdict: MonteCarloVerdict = MonteCarloVerdict.INSUFFICIENT_EVIDENCE
+
+
 class WalkForwardResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -381,3 +471,11 @@ class WalkForwardResult(BaseModel):
     oos_attribution: ExecutionAttribution = Field(default_factory=ExecutionAttribution)
     oos_attribution_by_symbol: dict[str, ExecutionAttribution] = Field(default_factory=dict)
     generated_at: datetime | None = None
+    is_multi_symbol: bool = False
+    allocation_model: AllocationModel = AllocationModel.EQUAL_WEIGHT
+    allocation_note: str = PORTFOLIO_ALLOCATION_NOTE
+    symbol_allocation_capital: float | None = None
+    symbol_results: list[SymbolWalkForwardResult] = Field(default_factory=list)
+    portfolio: PortfolioWalkForwardSummary | None = None
+    portfolio_equity_curve: list[EquityPoint] = Field(default_factory=list)
+    strategy_symbol_matrix: list[StrategySymbolCell] = Field(default_factory=list)
