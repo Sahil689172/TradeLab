@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api.routes import market, system, v1_root
+from app.api.routes import dashboard, market, system, v1_root
 
 # Unversioned system routes: /, /health
 system_router = APIRouter()
@@ -12,3 +12,4 @@ system_router.include_router(system.router)
 api_v1_router = APIRouter()
 api_v1_router.include_router(v1_root.router)
 api_v1_router.include_router(market.router)
+api_v1_router.include_router(dashboard.router)

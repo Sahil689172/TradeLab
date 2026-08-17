@@ -79,8 +79,24 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | Market bootstrap | http://127.0.0.1:8000/api/v1/market/bootstrap/RELIANCE.NS |
 | Swagger UI | http://127.0.0.1:8000/docs |
 | ReDoc | http://127.0.0.1:8000/redoc |
+| **Dashboard UI** | http://127.0.0.1:5173/ (see `frontend/README.md`) |
 
-On startup the app creates:
+### Trading dashboard (frontend + API)
+
+Backend dashboard routes live under `/api/v1/` (`stocks`, `strategies`, `portfolio`, `orders`, `market-data/refresh`, `system/status`). Paper buy/sell uses the existing A5.2 `SimulatedBroker` — no live broker.
+
+```bash
+# Terminal 1 — API
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Terminal 2 — UI
+cd frontend
+npm install
+npm run dev
+```
+
+Bootstrap at least one symbol before charts/strategies (e.g. `POST /api/v1/market/bootstrap/RELIANCE` or use **Refresh Data** in the UI).
+
 
 ```text
 backend/data/metadata.db

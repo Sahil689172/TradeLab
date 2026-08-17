@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_v1_router, system_router
 from app.core.config import Settings, get_settings
@@ -63,6 +64,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = cfg
 
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.add_middleware(RequestLoggingMiddleware)
     register_exception_handlers(app)
     app.include_router(system_router)
