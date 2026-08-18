@@ -1,16 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { formatCurrency } from '../../utils/format';
-import type { DashboardSignal } from '../../types/api';
+import type { DashboardSignal, StrategySignalRow } from '../../types/api';
 
 interface TradePanelProps {
   symbol: string;
   currentPrice: number | null;
   signal?: DashboardSignal;
+  strategyRow?: StrategySignalRow | null;
 }
 
-export function TradePanel({ symbol, currentPrice, signal }: TradePanelProps) {
+export function TradePanel({ symbol, currentPrice, signal, strategyRow }: TradePanelProps) {
   const queryClient = useQueryClient();
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY');
   const [quantity, setQuantity] = useState('1');
@@ -20,6 +21,15 @@ export function TradePanel({ symbol, currentPrice, signal }: TradePanelProps) {
   const [target, setTarget] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!strategyRow) return;
+    if (strategyRow.stop_loss != null) setStopLoss(String(strategyRow.stop_loss));
+    if (strategyRow.target != null) setTarget(String(strategyRow.target));
+    if (strategyRow.entry_price != null) setPrice(String(strategyRow.entry_price));
+    if (strategyRow.signal === 'SELL') setSide('SELL');
+    else if (strategyRow.signal === 'BUY') setSide('BUY');
+  }, [strategyRow]);
 
   const portfolio = useQuery({
     queryKey: ['portfolio'],
@@ -31,6 +41,7 @@ export function TradePanel({ symbol, currentPrice, signal }: TradePanelProps) {
   const estimated = qty > 0 && px ? qty * px : null;
   const cash = portfolio.data?.kpis.available_cash ?? null;
   const exposure = portfolio.data?.kpis.exposure_pct ?? null;
+  const displaySignal = strategyRow?.signal ?? signal;
 
   const mutation = useMutation({
     mutationFn: () => {
@@ -131,8 +142,8 @@ export function TradePanel({ symbol, currentPrice, signal }: TradePanelProps) {
           </p>
           <p>
             Strategy signal:{' '}
-            <span className={signal === 'BUY' ? 'signal-buy' : signal === 'SELL' ? 'signal-sell' : 'signal-neutral'}>
-              {signal ?? '—'}
+            <span className={displaySignal === 'BUY' ? 'signal-buy' : displaySignal === 'SELL' ? 'signal-sell' : 'signal-neutral'}>
+              {displaySignal ?? '—'}
             </span>
           </p>
         </div>

@@ -23,6 +23,7 @@ vi.mock('../api/client', () => ({
     listOrders: vi.fn(),
     buyOrder: vi.fn(),
     sellOrder: vi.fn(),
+    runMonteCarlo: vi.fn(),
   },
 }));
 
@@ -228,12 +229,12 @@ describe('Stock detail', () => {
     renderWithQuery(<StockDetailPage symbol="RELIANCE" onBack={() => undefined} />);
 
     expect(await screen.findByText('Reliance Industries Ltd')).toBeInTheDocument();
-    expect(screen.getByText(/1 Day OHLCV/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /launch chart/i })).toBeInTheDocument();
     expect(await screen.findByText('latest 20 trading days', { exact: false })).toBeInTheDocument();
     expect(screen.getByText('12 strategies')).toBeInTheDocument();
     expect(screen.getByText('ema_trend')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /fetch older data/i }));
+    fireEvent.click(screen.getByRole('button', { name: /load more history/i }));
     await waitFor(() => expect(vi.mocked(api.getOHLCV).mock.calls.length).toBeGreaterThanOrEqual(2));
     const olderCall = vi.mocked(api.getOHLCV).mock.calls.find((call) => call[3]);
     expect(olderCall?.[3]).toBeTruthy();

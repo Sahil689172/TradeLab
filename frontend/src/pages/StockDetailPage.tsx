@@ -1,6 +1,10 @@
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { HistoricalChart } from '../components/dashboard/HistoricalChart';
+import { ChartWorkspace } from '../components/chart/ChartWorkspace';
+import { StrategyFilterPanel } from '../components/chart/StrategyFilterPanel';
+import { AnalysisPanel } from '../components/chart/AnalysisPanel';
+import { MonteCarloPanel } from '../components/chart/MonteCarloPanel';
 import { TradePanel } from '../components/dashboard/TradePanel';
 import { StockStrategyTable } from '../components/dashboard/StockStrategyTable';
 import { formatCurrency, formatPct, formatTs, pnlClass } from '../utils/format';
@@ -10,33 +14,76 @@ interface StockDetailPageProps {
   onBack: () => void;
 }
 
+type ChartInterval = '1D' | '1W' | '1M';
+
 export function StockDetailPage({ symbol, onBack }: StockDetailPageProps) {
+  const [timeframe, setTimeframe] = useState<ChartInterval>('1D');
+  const [chartLaunched, setChartLaunched] = useState(false);
+  const [lastRefresh, setLastRefresh] = useState<string | null>(null);
+  const [enabledStrategies, setEnabledStrategies] = useState<Set<string>>(new Set());
+  const [selectedStrategy, setSelectedStrategy] = useState<string | null>(null);
+
   const stockQuery = useQuery({
     queryKey: ['stock', symbol],
     queryFn: () => api.getStock(symbol),
     retry: false,
   });
   const analysisQuery = useQuery({
-    queryKey: ['strategy-analysis', symbol, '1D'],
-    queryFn: () => api.getStrategyAnalysis(symbol, '1D', false),
+    queryKey: ['strategy-analysis', symbol, timeframe],
+    queryFn: () => api.getStrategyAnalysis(symbol, timeframe, false),
     retry: false,
   });
 
+  const strategies = analysisQuery.data?.strategies ?? [];
+
+  const strategyKey = strategies.map((s) => s.strategy).join(',');
+
+  useEffect(() => {
+    if (strategies.length === 0) return;
+    setEnabledStrategies(new Set(strategies.map((s) => s.strategy)));
+    setSelectedStrategy((prev) => {
+      if (prev && strategies.some((s) => s.strategy === prev)) return prev;
+      const first = strategies.find((s) => s.signal !== 'NEUTRAL') ?? strategies[0];
+      return first.strategy;
+    });
+  }, [symbol, timeframe, strategyKey]);
+
+  const selectedRow = useMemo(
+    () => strategies.find((s) => s.strategy === selectedStrategy) ?? null,
+    [strategies, selectedStrategy],
+  );
+
   const stock = stockQuery.data;
   const consensus = analysisQuery.data?.assumption.bias;
-  const topSignal = analysisQuery.data?.strategies.find((s) => s.signal !== 'NEUTRAL')?.signal;
+  const topSignal = selectedRow?.signal ?? strategies.find((s) => s.signal !== 'NEUTRAL')?.signal;
+
+  function toggleStrategy(name: string) {
+    setEnabledStrategies((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
 
   return (
     <div className="space-y-4">
-      <button type="button" className="text-xs text-slate-500 hover:text-slate-300" onClick={onBack}>
-        ← Stocks
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" className="text-xs text-slate-500 hover:text-slate-300" onClick={onBack}>
+          ← Stocks
+        </button>
+        <button
+          type="button"
+          className={`ml-auto rounded px-3 py-1.5 text-xs ${chartLaunched ? 'bg-terminal-accent text-white' : 'border border-terminal-border text-slate-300'}`}
+          onClick={() => setChartLaunched((v) => !v)}
+        >
+          {chartLaunched ? 'Chart workspace open' : 'Launch Chart'}
+        </button>
+      </div>
 
       {stockQuery.isLoading && <div className="panel p-4 text-sm text-slate-500">Loading {symbol}…</div>}
       {stockQuery.isError && (
-        <div className="panel p-4 text-sm text-terminal-sell">
-          {(stockQuery.error as Error).message}
-        </div>
+        <div className="panel p-4 text-sm text-terminal-sell">{(stockQuery.error as Error).message}</div>
       )}
 
       {stock && (
@@ -47,6 +94,7 @@ export function StockDetailPage({ symbol, onBack }: StockDetailPageProps) {
               <p className="text-sm text-slate-400">{stock.company_name}</p>
               <p className="text-xs text-slate-500">
                 {stock.sector ?? 'Sector n/a'} · Last data {formatTs(stock.last_data_date)}
+                {lastRefresh ? ` · Refreshed ${formatTs(lastRefresh)}` : ''}
               </p>
             </div>
             <div className="text-right">
@@ -54,24 +102,64 @@ export function StockDetailPage({ symbol, onBack }: StockDetailPageProps) {
               <p className={`font-mono text-sm ${pnlClass(stock.daily_change_pct)}`}>
                 {formatPct(stock.daily_change_pct, true)}
               </p>
-              <p className="text-[10px] uppercase text-slate-500">
-                Assumption: {consensus ?? '—'}
-              </p>
+              <p className="text-[10px] uppercase text-slate-500">Assumption: {consensus ?? '—'}</p>
             </div>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        <div className="lg:col-span-8">
-          <HistoricalChart symbol={symbol} />
+      {analysisQuery.isError && (
+        <div className="panel p-4 text-sm text-terminal-sell">
+          Strategy engine: {(analysisQuery.error as Error).message}
         </div>
-        <div className="lg:col-span-4">
-          <TradePanel symbol={symbol} currentPrice={stock?.last_price ?? null} signal={topSignal} />
+      )}
+
+      <div className={`grid grid-cols-1 gap-4 ${chartLaunched ? 'xl:grid-cols-12' : 'lg:grid-cols-12'}`}>
+        <div className={chartLaunched ? 'xl:col-span-9 space-y-4' : 'lg:col-span-8 space-y-4'}>
+          <ChartWorkspace
+            symbol={symbol}
+            timeframe={timeframe}
+            onTimeframeChange={setTimeframe}
+            strategies={strategies}
+            enabledStrategies={enabledStrategies}
+            selectedStrategy={selectedStrategy}
+            expanded={chartLaunched}
+            lastRefresh={lastRefresh}
+            onRefreshComplete={setLastRefresh}
+          />
+          {chartLaunched && (
+            <>
+              <StrategyFilterPanel
+                strategies={strategies}
+                enabled={enabledStrategies}
+                selected={selectedStrategy}
+                onToggle={toggleStrategy}
+                onSelect={setSelectedStrategy}
+              />
+              <StockStrategyTable symbol={symbol} timeframe={timeframe} onSelect={setSelectedStrategy} selected={selectedStrategy} />
+            </>
+          )}
+        </div>
+        <div className={chartLaunched ? 'xl:col-span-3 space-y-4' : 'lg:col-span-4 space-y-4'}>
+          <AnalysisPanel currentPrice={stock?.last_price ?? null} strategy={selectedRow} />
+          <TradePanel
+            symbol={symbol}
+            currentPrice={stock?.last_price ?? null}
+            signal={topSignal}
+            strategyRow={selectedRow}
+          />
+          {chartLaunched && <MonteCarloPanel symbol={symbol} strategy={selectedStrategy} />}
         </div>
       </div>
 
-      <StockStrategyTable symbol={symbol} />
+      {!chartLaunched && (
+        <StockStrategyTable
+          symbol={symbol}
+          timeframe={timeframe}
+          onSelect={setSelectedStrategy}
+          selected={selectedStrategy}
+        />
+      )}
     </div>
   );
 }

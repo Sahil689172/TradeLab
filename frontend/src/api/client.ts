@@ -11,6 +11,8 @@ import type {
   StrategyAnalysisResponse,
   StrategyCatalogItem,
   SystemStatus,
+  MonteCarloRequest,
+  MonteCarloDashboardResponse,
 } from '../types/api';
 
 const BASE_URL = '/api/v1';
@@ -116,5 +118,12 @@ export const api = {
 
   getSystemStatus() {
     return request<SystemStatus>('/system/status');
+  },
+
+  runMonteCarlo(symbol: string, body: MonteCarloRequest) {
+    return request<MonteCarloDashboardResponse>(
+      `/stocks/${encodeURIComponent(symbol)}/monte-carlo`,
+      { method: 'POST', body: JSON.stringify(body) },
+    );
   },
 };

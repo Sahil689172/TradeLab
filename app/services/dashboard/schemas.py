@@ -262,3 +262,83 @@ class SystemStatus(BaseModel):
     paper_trading: bool = True
     last_refresh: datetime | None = None
     environment: str = "development"
+
+
+class PercentileBand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    p05: float = 0.0
+    p25: float = 0.0
+    p50: float = 0.0
+    p75: float = 0.0
+    p95: float = 0.0
+
+    @classmethod
+    def from_summary(cls, summary: object) -> PercentileBand:
+        return cls(
+            p05=float(getattr(summary, "p05", 0.0)),
+            p25=float(getattr(summary, "p25", 0.0)),
+            p50=float(getattr(summary, "p50", 0.0)),
+            p75=float(getattr(summary, "p75", 0.0)),
+            p95=float(getattr(summary, "p95", 0.0)),
+        )
+
+
+class NextDayOutlook(BaseModel):
+    """Statistical outlook from Monte Carlo — not a guaranteed forecast."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    supported: bool = False
+    disclaimer: str = ""
+    message: str = ""
+    expected_return_pct: float | None = None
+    return_range_low_pct: float | None = None
+    return_range_high_pct: float | None = None
+    probability_of_loss: float | None = None
+    confidence_label: str = ""
+    simulation_count: int = 0
+    historical_sample_count: int = 0
+    timeframe: str = ""
+    trade_source: str = ""
+    symbol: str = ""
+    strategy: str = ""
+
+
+class MonteCarloDashboardRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    strategy: str
+    simulations: int = Field(default=1_000, ge=1, le=100_000)
+    random_seed: int = Field(default=42)
+    initial_capital: float = Field(default=1_000_000.0, gt=0.0)
+    timeframe: str = "1D"
+
+
+class MonteCarloDashboardResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str
+    strategy: str
+    trade_source: str
+    historical_oos_trade_count: int
+    simulation_count: int
+    available: bool
+    message: str
+    sample_quality: str = ""
+    verdict: str = ""
+    probability_of_loss: float | None = None
+    probability_of_profit: float | None = None
+    probability_of_ruin: float | None = None
+    median_return_pct: float | None = None
+    return_percentiles: PercentileBand | None = None
+    max_drawdown_percentiles: PercentileBand | None = None
+    final_capital_percentiles: PercentileBand | None = None
+    historical_return_pct: float | None = None
+    historical_trades: int = 0
+    historical_win_rate: float | None = None
+    period: str = ""
+    timeframe: str = "1D"
+    next_day_outlook: NextDayOutlook | None = None
+    warnings: list[str] = Field(default_factory=list)
+    resampling_limitation: str = ""

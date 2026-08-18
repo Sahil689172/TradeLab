@@ -285,3 +285,43 @@ def test_filled_order_persists_stop_and_target(client, api_gateway) -> None:
     assert holding["stop_loss"] == 2400.0
     assert holding["target"] == 2600.0
 
+
+def test_monte_carlo_invalid_strategy(client, api_gateway) -> None:
+    _override(client, api_gateway)
+    response = client.post(
+        "/api/v1/stocks/RELIANCE/monte-carlo",
+        json={"strategy": "not_a_real_strategy", "simulations": 1000},
+    )
+    _clear(client)
+    assert response.status_code == 400
+
+
+def test_monte_carlo_no_history(client, api_gateway) -> None:
+    _override(client, api_gateway)
+    response = client.post(
+        "/api/v1/stocks/NOTREAL/monte-carlo",
+        json={"strategy": "ema_trend", "simulations": 1000},
+    )
+    _clear(client)
+    assert response.status_code in {400, 404}
+
+
+def test_monte_carlo_replay_path(client, api_gateway, test_settings) -> None:
+    _override(client, api_gateway)
+    client.post("/api/v1/market/bootstrap/RELIANCE")
+    _write_daily_parquet(test_settings, rows=120)
+    response = client.post(
+        "/api/v1/stocks/RELIANCE/monte-carlo",
+        json={"strategy": "supertrend", "simulations": 1000, "random_seed": 42},
+    )
+    _clear(client)
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["symbol"] == "RELIANCE"
+    assert data["simulation_count"] in {0, 1000}
+    assert "historical_oos_trade_count" in data
+    assert data["historical_oos_trade_count"] != data["simulation_count"] or data["simulation_count"] == 0
+    if data["available"]:
+        assert data["next_day_outlook"] is not None
+        assert "NOT a guaranteed" in data["next_day_outlook"]["disclaimer"]
+

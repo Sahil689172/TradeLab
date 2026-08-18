@@ -11,9 +11,12 @@ from app.core.config import Settings
 from app.market_data.services.market_data_gateway import MarketDataGateway
 from app.schemas.responses import SuccessResponse
 from app.services.dashboard.market_service import get_market_service
+from app.services.dashboard.monte_carlo_service import get_monte_carlo_service
 from app.services.dashboard.paper_trading_service import get_paper_book
 from app.services.dashboard.portfolio_service import PortfolioService
 from app.services.dashboard.schemas import (
+    MonteCarloDashboardRequest,
+    MonteCarloDashboardResponse,
     OHLCVResponse,
     OrderRequest,
     OrderResponse,
@@ -131,6 +134,23 @@ def strategy_timeframes(
         include_matrix=True,
     )
     return SuccessResponse(data=analysis)
+
+
+@router.post(
+    "/stocks/{symbol}/monte-carlo",
+    response_model=SuccessResponse[MonteCarloDashboardResponse],
+)
+def run_monte_carlo(
+    symbol: str,
+    body: MonteCarloDashboardRequest,
+    settings: Settings = Depends(get_app_settings),
+) -> SuccessResponse[MonteCarloDashboardResponse]:
+    _ = settings
+    try:
+        result = get_monte_carlo_service().run(symbol, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return SuccessResponse(data=result, message=result.message)
 
 
 @router.get("/portfolio", response_model=SuccessResponse[PortfolioResponse])

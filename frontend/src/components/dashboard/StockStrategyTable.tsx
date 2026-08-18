@@ -5,6 +5,9 @@ import type { DashboardSignal } from '../../types/api';
 
 interface StockStrategyTableProps {
   symbol: string;
+  timeframe?: string;
+  selected?: string | null;
+  onSelect?: (strategy: string) => void;
 }
 
 function signalClass(signal: DashboardSignal): string {
@@ -13,17 +16,22 @@ function signalClass(signal: DashboardSignal): string {
   return 'signal-neutral';
 }
 
-export function StockStrategyTable({ symbol }: StockStrategyTableProps) {
+export function StockStrategyTable({
+  symbol,
+  timeframe = '1D',
+  selected,
+  onSelect,
+}: StockStrategyTableProps) {
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['strategy-analysis', symbol, '1D'],
-    queryFn: () => api.getStrategyAnalysis(symbol, '1D', false),
+    queryKey: ['strategy-analysis', symbol, timeframe],
+    queryFn: () => api.getStrategyAnalysis(symbol, timeframe, false),
     retry: false,
   });
 
   return (
     <div className="panel">
       <div className="panel-header">
-        <span className="panel-title">Strategy results · 1D</span>
+        <span className="panel-title">Strategy results · {timeframe}</span>
         {data && <span className="text-[10px] text-slate-500">{data.strategies.length} strategies</span>}
       </div>
       {isLoading && <div className="p-4 text-sm text-slate-500">Evaluating strategies…</div>}
@@ -55,10 +63,16 @@ export function StockStrategyTable({ symbol }: StockStrategyTableProps) {
             </thead>
             <tbody>
               {data.strategies.map((row) => (
-                <tr key={row.strategy} className="border-b border-terminal-border/40">
+                <tr
+                  key={row.strategy}
+                  className={`cursor-pointer border-b border-terminal-border/40 hover:bg-slate-800/40 ${
+                    selected === row.strategy ? 'bg-terminal-accent/10' : ''
+                  }`}
+                  onClick={() => onSelect?.(row.strategy)}
+                >
                   <td className="px-3 py-2 text-slate-200">{row.display_name}</td>
                   <td className={`px-3 py-2 font-mono font-semibold ${signalClass(row.signal)}`}>
-                    {row.signal}
+                    {row.status === 'ERROR' ? 'NO SIGNAL' : row.signal}
                   </td>
                   <td className="px-3 py-2 text-xs text-slate-400">{row.recommended_action}</td>
                   <td className="px-3 py-2 font-mono">{formatCurrency(row.current_price ?? row.entry_price)}</td>

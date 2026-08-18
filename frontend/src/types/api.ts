@@ -221,3 +221,63 @@ export const TIMEFRAMES = ['1m', '5m', '15m', '1h', '1D', '1W', '1M'] as const;
 export type Timeframe = (typeof TIMEFRAMES)[number];
 
 export const DEFAULT_SYMBOL = 'RELIANCE';
+
+export interface PercentileBand {
+  p05: number;
+  p25: number;
+  p50: number;
+  p75: number;
+  p95: number;
+}
+
+export interface NextDayOutlook {
+  supported: boolean;
+  disclaimer: string;
+  message: string;
+  expected_return_pct: number | null;
+  return_range_low_pct: number | null;
+  return_range_high_pct: number | null;
+  probability_of_loss: number | null;
+  confidence_label: string;
+  simulation_count: number;
+  historical_sample_count: number;
+  timeframe: string;
+  trade_source: string;
+  symbol: string;
+  strategy: string;
+}
+
+export interface MonteCarloRequest {
+  strategy: string;
+  simulations?: number;
+  random_seed?: number;
+  initial_capital?: number;
+  timeframe?: string;
+}
+
+export interface MonteCarloDashboardResponse {
+  symbol: string;
+  strategy: string;
+  trade_source: string;
+  historical_oos_trade_count: number;
+  simulation_count: number;
+  available: boolean;
+  message: string;
+  sample_quality: string;
+  verdict: string;
+  probability_of_loss: number | null;
+  probability_of_profit: number | null;
+  probability_of_ruin: number | null;
+  median_return_pct: number | null;
+  return_percentiles: PercentileBand | null;
+  max_drawdown_percentiles: PercentileBand | null;
+  final_capital_percentiles: PercentileBand | null;
+  historical_return_pct: number | null;
+  historical_trades: number;
+  historical_win_rate: number | null;
+  period: string;
+  timeframe: string;
+  next_day_outlook: NextDayOutlook | null;
+  warnings: string[];
+  resampling_limitation: string;
+}
