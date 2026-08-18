@@ -39,20 +39,28 @@ router = APIRouter(tags=["dashboard"])
 
 
 @router.get("/favorites", response_model=SuccessResponse[FavoritesResponse])
-def list_favorites() -> SuccessResponse[FavoritesResponse]:
-    symbols = get_favorites_service().list_symbols()
+def list_favorites(
+    settings: Settings = Depends(get_app_settings),
+) -> SuccessResponse[FavoritesResponse]:
+    symbols = get_favorites_service(settings).list_symbols()
     return SuccessResponse(data=FavoritesResponse(symbols=symbols))
 
 
 @router.post("/favorites/{symbol}", response_model=SuccessResponse[FavoritesResponse])
-def add_favorite(symbol: str) -> SuccessResponse[FavoritesResponse]:
-    symbols = get_favorites_service().add(symbol)
+def add_favorite(
+    symbol: str,
+    settings: Settings = Depends(get_app_settings),
+) -> SuccessResponse[FavoritesResponse]:
+    symbols = get_favorites_service(settings).add(symbol)
     return SuccessResponse(data=FavoritesResponse(symbols=symbols), message=f"Added {symbol.upper()}")
 
 
 @router.delete("/favorites/{symbol}", response_model=SuccessResponse[FavoritesResponse])
-def remove_favorite(symbol: str) -> SuccessResponse[FavoritesResponse]:
-    symbols = get_favorites_service().remove(symbol)
+def remove_favorite(
+    symbol: str,
+    settings: Settings = Depends(get_app_settings),
+) -> SuccessResponse[FavoritesResponse]:
+    symbols = get_favorites_service(settings).remove(symbol)
     return SuccessResponse(data=FavoritesResponse(symbols=symbols), message=f"Removed {symbol.upper()}")
 
 
@@ -61,9 +69,10 @@ def list_stocks(
     q: str = Query(default="", max_length=64),
     limit: int = Query(default=501, ge=1, le=501),
     gateway: MarketDataGateway = Depends(get_market_data_gateway),
+    settings: Settings = Depends(get_app_settings),
 ) -> SuccessResponse[StockListResponse]:
     book = get_paper_book()
-    favorites = set(get_favorites_service().list_symbols())
+    favorites = set(get_favorites_service(settings).list_symbols())
     book.favorites = favorites
     holdings = {p.symbol for p in book.broker.snapshot().positions.values() if p.is_open}
     universe = get_universe_service()
@@ -82,8 +91,9 @@ def list_stocks(
 def get_stock(
     symbol: str,
     gateway: MarketDataGateway = Depends(get_market_data_gateway),
+    settings: Settings = Depends(get_app_settings),
 ) -> SuccessResponse[StockSummary]:
-    favorites = set(get_favorites_service().list_symbols())
+    favorites = set(get_favorites_service(settings).list_symbols())
     stock = get_universe_service().get_stock(symbol, gateway=gateway, favorites=favorites)
     if stock is None:
         raise HTTPException(status_code=404, detail=f"Symbol '{symbol}' not in supported universe")

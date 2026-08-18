@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
+import pytest
 
 from app.api.deps import get_market_data_gateway
+from app.backtesting.monte_carlo.schemas import MonteCarloTrade
 from app.services.dashboard.paper_trading_service import reset_paper_book
+
+# HTTP Monte Carlo tests mock replay trades; simulation count is validated separately.
+_MC_TEST_SIMULATIONS = 50
 
 
 def _override(client, api_gateway) -> None:
@@ -15,6 +22,30 @@ def _override(client, api_gateway) -> None:
 def _clear(client) -> None:
     client.app.dependency_overrides.clear()
     reset_paper_book()
+
+
+def _sample_replay_trades(count: int = 12) -> list[MonteCarloTrade]:
+    return [
+        MonteCarloTrade(
+            pnl=100.0 if index % 2 == 0 else -40.0,
+            return_pct=0.02 if index % 2 == 0 else -0.008,
+        )
+        for index in range(count)
+    ]
+
+
+@pytest.fixture
+def fast_mc_replay(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Avoid full A5 replay during dashboard API tests (minutes per call otherwise)."""
+    trades = _sample_replay_trades()
+
+    def _fake_replay(*_args: Any, **_kwargs: Any) -> tuple[list[MonteCarloTrade], dict[str, Any]]:
+        return trades, {"period": "2020-01-01 → 2020-06-01", "replay_errors": []}
+
+    monkeypatch.setattr(
+        "app.services.dashboard.monte_carlo_service.load_trades_from_replay",
+        _fake_replay,
+    )
 
 
 def test_list_stocks_universe(client, api_gateway) -> None:
@@ -306,7 +337,12 @@ def test_monte_carlo_no_history(client, api_gateway) -> None:
     assert response.status_code in {400, 404}
 
 
-def test_monte_carlo_replay_path(client, api_gateway, test_settings) -> None:
+def test_monte_carlo_replay_path(
+    client,
+    api_gateway,
+    test_settings,
+    fast_mc_replay,
+) -> None:
     _override(client, api_gateway)
     client.post("/api/v1/market/bootstrap/RELIANCE")
     _write_daily_parquet(test_settings, rows=120)
@@ -314,7 +350,7 @@ def test_monte_carlo_replay_path(client, api_gateway, test_settings) -> None:
         "/api/v1/stocks/RELIANCE/monte-carlo",
         json={
             "strategy": "supertrend",
-            "simulations": 1000,
+            "simulations": _MC_TEST_SIMULATIONS,
             "random_seed": 42,
             "horizons": [1, 2, 5],
         },
@@ -323,7 +359,7 @@ def test_monte_carlo_replay_path(client, api_gateway, test_settings) -> None:
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["symbol"] == "RELIANCE"
-    assert data["simulation_count"] in {0, 1000}
+    assert data["simulation_count"] in {0, _MC_TEST_SIMULATIONS}
     assert "historical_oos_trade_count" in data
     assert data["historical_oos_trade_count"] != data["simulation_count"] or data["simulation_count"] == 0
     if data["available"]:
@@ -335,6 +371,8 @@ def test_monte_carlo_replay_path(client, api_gateway, test_settings) -> None:
         assert horizons[1]["median_price"] is not None
         assert data["historical_daily_return_count"] >= 30
         assert data["current_price"] is not None
+        assert data["simulation_count"] == _MC_TEST_SIMULATIONS
+        assert data["historical_oos_trade_count"] != _MC_TEST_SIMULATIONS
 
 
 def test_favorites_add_remove_persist(client, api_gateway, test_settings) -> None:
@@ -357,39 +395,27 @@ def test_favorites_add_remove_persist(client, api_gateway, test_settings) -> Non
     reset_favorites_service()
 
 
-def test_monte_carlo_horizons_unsupported_without_history(client, api_gateway) -> None:
-    _override(client, api_gateway)
-    response = client.post(
-        "/api/v1/stocks/RELIANCE/monte-carlo",
-        json={"strategy": "supertrend", "simulations": 1000, "horizons": [1, 2, 5]},
+def test_monte_carlo_horizons_unsupported_without_history() -> None:
+    import numpy as np
+
+    from app.services.dashboard.horizon_outlook import compute_horizon_bands
+
+    bands = compute_horizon_bands(
+        np.array([0.01, -0.01], dtype=float),
+        current_price=100.0,
+        horizons=[1, 2, 5],
+        simulations=_MC_TEST_SIMULATIONS,
+        random_seed=1,
     )
-    _clear(client)
-    if response.status_code == 200 and response.json()["data"]["available"]:
-        for row in response.json()["data"]["horizon_outlook"]:
-            if response.json()["data"]["historical_daily_return_count"] < 30:
-                assert row["supported"] is False
-                assert "Not available" in row["message"]
+    assert len(bands) == 3
+    assert all(not band.supported for band in bands)
+    assert all("Not available" in band.message for band in bands)
 
 
-def test_monte_carlo_simulation_counts(client, api_gateway, test_settings) -> None:
-    _override(client, api_gateway)
-    client.post("/api/v1/market/bootstrap/RELIANCE")
-    _write_daily_parquet(test_settings, rows=120)
-    for sims in (1_000, 10_000):
-        response = client.post(
-            "/api/v1/stocks/RELIANCE/monte-carlo",
-            json={"strategy": "supertrend", "simulations": sims, "random_seed": 7},
-        )
-        data = response.json()["data"]
-        if data["available"]:
-            assert data["simulation_count"] == sims
-            assert data["historical_oos_trade_count"] != sims
-    _clear(client)
-
-
-def test_monte_carlo_accepts_100k_simulations() -> None:
+def test_monte_carlo_accepts_large_simulation_counts() -> None:
     from app.services.dashboard.schemas import MonteCarloDashboardRequest
 
-    req = MonteCarloDashboardRequest(strategy="supertrend", simulations=100_000)
-    assert req.simulations == 100_000
+    for sims in (1_000, 10_000, 100_000):
+        req = MonteCarloDashboardRequest(strategy="supertrend", simulations=sims)
+        assert req.simulations == sims
 

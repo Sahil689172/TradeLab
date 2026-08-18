@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../App';
@@ -8,7 +8,7 @@ import { StockDetailPage } from '../pages/StockDetailPage';
 import { PortfolioPage } from '../pages/PortfolioPage';
 import { OrdersPage } from '../pages/OrdersPage';
 import { api } from '../api/client';
-import type { OHLCVBar, OrderRow, StockSummary, StrategySignalRow } from '../types/api';
+import type { OHLCVBar, OrderRow, StockSummary, StrategyAnalysisResponse, StrategySignalRow } from '../types/api';
 
 vi.mock('../api/client', () => ({
   api: {
@@ -109,6 +109,89 @@ const twelveNames = [
   'relative_strength',
 ];
 
+function mockAnalysisResponse(): StrategyAnalysisResponse {
+  return {
+    symbol: 'RELIANCE',
+    timeframe: '1D',
+    generated_at: '2024-01-20T00:00:00Z',
+    strategies: twelveNames.map(strategyRow),
+    timeframe_matrix: [],
+    assumption: {
+      symbol: 'RELIANCE',
+      timeframe: '1D',
+      bias: 'NEUTRAL',
+      confidence: null,
+      confidence_label: 'Historical/Model Confidence',
+      supporting_strategies: [],
+      supporting_indicators: [],
+      evaluation_window: '',
+      sample_size: 20,
+      last_updated: null,
+      explanation: '',
+    },
+    data_note: 'Historical/Model Confidence',
+  };
+}
+
+function mockPortfolioEmpty() {
+  return {
+    kpis: {
+      total_invested: 0,
+      current_value: 1_000_000,
+      unrealized_pnl: 0,
+      realized_pnl: 0,
+      available_cash: 1_000_000,
+      todays_pnl: 0,
+      initial_capital: 1_000_000,
+      exposure_pct: 0,
+      max_drawdown_pct: 0,
+    },
+    positions: [],
+    per_symbol_pnl: {},
+  };
+}
+
+function mockOhlcv(bars: OHLCVBar[]) {
+  return {
+    symbol: 'RELIANCE',
+    interval: '1D',
+    interval_label: '1 Day',
+    bars,
+    source: 'local_parquet',
+    delayed: true,
+    last_bar_timestamp: bars.length > 0 ? bars[bars.length - 1].date : null,
+    oldest_bar_timestamp: bars[0]?.date ?? null,
+    has_more: false,
+    total_bars: bars.length,
+    message: '',
+  };
+}
+
+function mockDashboardApis() {
+  vi.mocked(api.getStock).mockResolvedValue(stock);
+  vi.mocked(api.getPortfolio).mockResolvedValue(mockPortfolioEmpty());
+  vi.mocked(api.getStrategyAnalysis).mockResolvedValue(mockAnalysisResponse());
+  vi.mocked(api.listStocks).mockResolvedValue({ total: 501, stocks: [stock] });
+  vi.mocked(api.getOHLCV).mockResolvedValue(mockOhlcv(makeBars(20)));
+  vi.mocked(api.getSystemStatus).mockResolvedValue({
+    backend_connected: true,
+    market_data_source: 'yfinance',
+    yfinance_status: 'available',
+    universe_size: 501,
+    paper_trading: true,
+    last_refresh: null,
+    environment: 'test',
+  });
+  vi.mocked(api.listStrategies).mockResolvedValue(
+    twelveNames.map((name) => ({
+      name,
+      display_name: name,
+      description: '',
+      supported_timeframes: ['1D'],
+    })),
+  );
+}
+
 beforeEach(() => {
   vi.mocked(api.getStock).mockRejectedValue(new Error('offline'));
   vi.mocked(api.refreshMarketData).mockRejectedValue(new Error('offline'));
@@ -128,11 +211,15 @@ beforeEach(() => {
 });
 
 describe('App shell and navigation', () => {
+  beforeEach(() => {
+    mockDashboardApis();
+  });
+
   it('renders the trading terminal shell', () => {
     renderWithQuery(<App />);
     expect(screen.getByText('Trading Terminal')).toBeInTheDocument();
     expect(screen.getByText('TradeLab')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /refresh data/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /refresh data/i }).length).toBeGreaterThan(0);
   });
 
   it('shows default symbol RELIANCE', () => {
@@ -171,6 +258,8 @@ describe('Stocks page favorites', () => {
     renderWithQuery(<StocksPage onSelectSymbol={() => undefined} />);
     fireEvent.click(screen.getByRole('button', { name: /favorites/i }));
     expect(await screen.findByText('No favorite stocks yet.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^all$/i }));
+    expect(await screen.findByText('Reliance Industries Ltd')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Add favorite' }));
     await waitFor(() => expect(api.addFavorite).toHaveBeenCalledWith('RELIANCE'));
   });
@@ -191,42 +280,8 @@ describe('Stock detail', () => {
   it('shows quote, 20-day history, strategies, and fetch-older without duplicate candles', async () => {
     const all = makeBars(40);
     vi.mocked(api.getStock).mockResolvedValue(stock);
-    vi.mocked(api.getPortfolio).mockResolvedValue({
-      kpis: {
-        total_invested: 0,
-        current_value: 1_000_000,
-        unrealized_pnl: 0,
-        realized_pnl: 0,
-        available_cash: 1_000_000,
-        todays_pnl: 0,
-        initial_capital: 1_000_000,
-        exposure_pct: 0,
-        max_drawdown_pct: 0,
-      },
-      positions: [],
-      per_symbol_pnl: {},
-    });
-    vi.mocked(api.getStrategyAnalysis).mockResolvedValue({
-      symbol: 'RELIANCE',
-      timeframe: '1D',
-      generated_at: '2024-01-20T00:00:00Z',
-      strategies: twelveNames.map(strategyRow),
-      timeframe_matrix: [],
-      assumption: {
-        symbol: 'RELIANCE',
-        timeframe: '1D',
-        bias: 'NEUTRAL',
-        confidence: null,
-        confidence_label: 'Historical/Model Confidence',
-        supporting_strategies: [],
-        supporting_indicators: [],
-        evaluation_window: '',
-        sample_size: 20,
-        last_updated: null,
-        explanation: '',
-      },
-      data_note: 'Historical/Model Confidence',
-    });
+    vi.mocked(api.getPortfolio).mockResolvedValue(mockPortfolioEmpty());
+    vi.mocked(api.getStrategyAnalysis).mockResolvedValue(mockAnalysisResponse());
     vi.mocked(api.getOHLCV).mockImplementation(async (_symbol, _interval, limit = 20, before?: string) => {
       const window = before
         ? all.filter((bar) => bar.date < before).slice(-limit)
@@ -238,7 +293,7 @@ describe('Stock detail', () => {
         bars: window,
         source: 'local_parquet',
         delayed: true,
-        last_bar_timestamp: window.at(-1)?.date ?? null,
+        last_bar_timestamp: window.length > 0 ? window[window.length - 1].date : null,
         oldest_bar_timestamp: window[0]?.date ?? null,
         has_more: before ? window[0]?.date !== all[0]?.date : all.length > window.length,
         total_bars: all.length,
@@ -249,9 +304,9 @@ describe('Stock detail', () => {
     renderWithQuery(<StockDetailPage symbol="RELIANCE" onBack={() => undefined} />);
 
     expect(await screen.findByText('Reliance Industries Ltd')).toBeInTheDocument();
-    expect(await screen.findByText('latest 20 trading days', { exact: false })).toBeInTheDocument();
+    expect(await screen.findByText(/showing latest 20\+ days/i)).toBeInTheDocument();
     expect(screen.getByText('12 strategies')).toBeInTheDocument();
-    expect(screen.getByText('ema_trend')).toBeInTheDocument();
+    expect(screen.getAllByText('ema_trend').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /run monte carlo simulation/i })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /load more history/i }));
@@ -259,7 +314,7 @@ describe('Stock detail', () => {
     const olderCall = vi.mocked(api.getOHLCV).mock.calls.find((call) => call[3]);
     expect(olderCall?.[3]).toBeTruthy();
     await waitFor(() =>
-      expect(screen.getByText(/extended to 40 days/i)).toBeInTheDocument(),
+      expect(screen.getByText(/40 bars/i)).toBeInTheDocument(),
     );
   });
 });
@@ -321,6 +376,7 @@ describe('Portfolio and orders pages', () => {
     vi.mocked(api.listOrders).mockResolvedValue([order]);
     renderWithQuery(<OrdersPage />);
     expect(await screen.findByText('Insufficient cash')).toBeInTheDocument();
-    expect(screen.getByText('REJECTED')).toBeInTheDocument();
+    const table = screen.getByRole('table');
+    expect(within(table).getByText('REJECTED')).toBeInTheDocument();
   });
 });

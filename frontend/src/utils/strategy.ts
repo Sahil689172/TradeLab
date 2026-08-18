@@ -1,4 +1,4 @@
-import type { StrategySignalRow } from '../../types/api';
+import type { StrategySignalRow } from '../types/api';
 
 export const STRATEGY_COLORS = [
   '#3b82f6',

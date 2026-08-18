@@ -1,6 +1,6 @@
 import type { StrategySignalRow } from '../../types/api';
 import { formatCurrency, formatTs } from '../../utils/format';
-import { formatSignalAction, riskReward, signalLabel } from '../../utils/strategy';
+import { riskReward, signalLabel } from '../../utils/strategy';
 
 interface AnalysisPanelProps {
   currentPrice: number | null;

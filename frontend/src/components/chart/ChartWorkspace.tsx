@@ -185,7 +185,7 @@ export function ChartWorkspace({
     );
 
     const markers: SeriesMarker<Time>[] = [];
-    overlayStrategies.forEach((row, idx) => {
+    overlayStrategies.forEach((row) => {
       const color = strategyColor(strategies.indexOf(row));
       const lastBar = bars[bars.length - 1];
       if (!lastBar || row.status === 'ERROR') return;

@@ -15,6 +15,15 @@ from app.main import create_app
 from app.market_data.services.market_data_gateway import MarketDataGateway
 
 
+@pytest.fixture(autouse=True)
+def _reset_favorites_singleton() -> None:
+    from app.services.dashboard.favorites_service import reset_favorites_service
+
+    reset_favorites_service()
+    yield
+    reset_favorites_service()
+
+
 @pytest.fixture()
 def test_settings(tmp_path: Path) -> Settings:
     """Provide isolated settings using a temporary SQLite database."""

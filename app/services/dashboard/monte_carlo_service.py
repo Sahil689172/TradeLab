@@ -30,6 +30,8 @@ from app.services.dashboard.schemas import (
 from app.services.trade_recommendation.strategy_validation import STRATEGY_REGISTERARS
 
 _OOS_STRATEGIES = frozenset({"ema_trend", "ema_professional", "ema_trend_professional", "ema"})
+# Horizon bands use bootstrap on daily returns; cap keeps large MC requests responsive.
+_HORIZON_BOOTSTRAP_CAP = 2_000
 
 
 class DashboardMonteCarloService:
@@ -134,7 +136,7 @@ class DashboardMonteCarloService:
                 daily_returns,
                 current_price=current_price,
                 horizons=horizons,
-                simulations=request.simulations,
+                simulations=min(request.simulations, _HORIZON_BOOTSTRAP_CAP),
                 random_seed=request.random_seed,
             )
         ]
