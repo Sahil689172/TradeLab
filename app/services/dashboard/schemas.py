@@ -305,6 +305,36 @@ class NextDayOutlook(BaseModel):
     strategy: str = ""
 
 
+class HorizonOutlook(BaseModel):
+    """Simulated statistical price bands — not guaranteed future prices."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    trading_days: int
+    label: str
+    supported: bool
+    message: str = ""
+    mean_price: float | None = None
+    median_price: float | None = None
+    lower_price: float | None = None
+    upper_price: float | None = None
+    expected_return_pct: float | None = None
+    lower_return_pct: float | None = None
+    upper_return_pct: float | None = None
+    probability_negative_return: float | None = None
+    method: str = ""
+    disclaimer: str = (
+        "Simulated statistical outcome from bootstrap of historical daily returns. "
+        "NOT a guaranteed future price."
+    )
+
+
+class FavoritesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    symbols: list[str] = Field(default_factory=list)
+
+
 class MonteCarloDashboardRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -313,6 +343,7 @@ class MonteCarloDashboardRequest(BaseModel):
     random_seed: int = Field(default=42)
     initial_capital: float = Field(default=1_000_000.0, gt=0.0)
     timeframe: str = "1D"
+    horizons: list[int] = Field(default_factory=lambda: [1, 2, 5])
 
 
 class MonteCarloDashboardResponse(BaseModel):
@@ -340,5 +371,12 @@ class MonteCarloDashboardResponse(BaseModel):
     period: str = ""
     timeframe: str = "1D"
     next_day_outlook: NextDayOutlook | None = None
+    current_price: float | None = None
+    historical_daily_return_count: int = 0
+    horizon_outlook: list[HorizonOutlook] = Field(default_factory=list)
+    horizon_disclaimer: str = (
+        "Future horizon bands are simulated statistical outcomes from bootstrap of "
+        "historical daily returns. They are NOT guaranteed future prices."
+    )
     warnings: list[str] = Field(default_factory=list)
     resampling_limitation: str = ""

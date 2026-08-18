@@ -247,12 +247,34 @@ export interface NextDayOutlook {
   strategy: string;
 }
 
+export interface HorizonOutlook {
+  trading_days: number;
+  label: string;
+  supported: boolean;
+  message: string;
+  mean_price: number | null;
+  median_price: number | null;
+  lower_price: number | null;
+  upper_price: number | null;
+  expected_return_pct: number | null;
+  lower_return_pct: number | null;
+  upper_return_pct: number | null;
+  probability_negative_return: number | null;
+  method: string;
+  disclaimer: string;
+}
+
+export interface FavoritesResponse {
+  symbols: string[];
+}
+
 export interface MonteCarloRequest {
   strategy: string;
   simulations?: number;
   random_seed?: number;
   initial_capital?: number;
   timeframe?: string;
+  horizons?: number[];
 }
 
 export interface MonteCarloDashboardResponse {
@@ -278,6 +300,10 @@ export interface MonteCarloDashboardResponse {
   period: string;
   timeframe: string;
   next_day_outlook: NextDayOutlook | null;
+  current_price: number | null;
+  historical_daily_return_count: number;
+  horizon_outlook: HorizonOutlook[];
+  horizon_disclaimer: string;
   warnings: string[];
   resampling_limitation: string;
 }

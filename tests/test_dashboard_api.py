@@ -312,7 +312,12 @@ def test_monte_carlo_replay_path(client, api_gateway, test_settings) -> None:
     _write_daily_parquet(test_settings, rows=120)
     response = client.post(
         "/api/v1/stocks/RELIANCE/monte-carlo",
-        json={"strategy": "supertrend", "simulations": 1000, "random_seed": 42},
+        json={
+            "strategy": "supertrend",
+            "simulations": 1000,
+            "random_seed": 42,
+            "horizons": [1, 2, 5],
+        },
     )
     _clear(client)
     assert response.status_code == 200
@@ -324,4 +329,67 @@ def test_monte_carlo_replay_path(client, api_gateway, test_settings) -> None:
     if data["available"]:
         assert data["next_day_outlook"] is not None
         assert "NOT a guaranteed" in data["next_day_outlook"]["disclaimer"]
+        assert len(data["horizon_outlook"]) == 3
+        horizons = {row["trading_days"]: row for row in data["horizon_outlook"]}
+        assert horizons[1]["supported"] is True
+        assert horizons[1]["median_price"] is not None
+        assert data["historical_daily_return_count"] >= 30
+        assert data["current_price"] is not None
+
+
+def test_favorites_add_remove_persist(client, api_gateway, test_settings) -> None:
+    from app.services.dashboard.favorites_service import reset_favorites_service
+
+    _override(client, api_gateway)
+    reset_favorites_service()
+    empty = client.get("/api/v1/favorites")
+    assert empty.json()["data"]["symbols"] == []
+    add = client.post("/api/v1/favorites/RELIANCE")
+    assert add.status_code == 200
+    assert add.json()["data"]["symbols"] == ["RELIANCE"]
+    dup = client.post("/api/v1/favorites/reliance")
+    assert dup.json()["data"]["symbols"] == ["RELIANCE"]
+    listed = client.get("/api/v1/favorites")
+    assert listed.json()["data"]["symbols"] == ["RELIANCE"]
+    removed = client.delete("/api/v1/favorites/RELIANCE")
+    assert removed.json()["data"]["symbols"] == []
+    _clear(client)
+    reset_favorites_service()
+
+
+def test_monte_carlo_horizons_unsupported_without_history(client, api_gateway) -> None:
+    _override(client, api_gateway)
+    response = client.post(
+        "/api/v1/stocks/RELIANCE/monte-carlo",
+        json={"strategy": "supertrend", "simulations": 1000, "horizons": [1, 2, 5]},
+    )
+    _clear(client)
+    if response.status_code == 200 and response.json()["data"]["available"]:
+        for row in response.json()["data"]["horizon_outlook"]:
+            if response.json()["data"]["historical_daily_return_count"] < 30:
+                assert row["supported"] is False
+                assert "Not available" in row["message"]
+
+
+def test_monte_carlo_simulation_counts(client, api_gateway, test_settings) -> None:
+    _override(client, api_gateway)
+    client.post("/api/v1/market/bootstrap/RELIANCE")
+    _write_daily_parquet(test_settings, rows=120)
+    for sims in (1_000, 10_000):
+        response = client.post(
+            "/api/v1/stocks/RELIANCE/monte-carlo",
+            json={"strategy": "supertrend", "simulations": sims, "random_seed": 7},
+        )
+        data = response.json()["data"]
+        if data["available"]:
+            assert data["simulation_count"] == sims
+            assert data["historical_oos_trade_count"] != sims
+    _clear(client)
+
+
+def test_monte_carlo_accepts_100k_simulations() -> None:
+    from app.services.dashboard.schemas import MonteCarloDashboardRequest
+
+    req = MonteCarloDashboardRequest(strategy="supertrend", simulations=100_000)
+    assert req.simulations == 100_000
 

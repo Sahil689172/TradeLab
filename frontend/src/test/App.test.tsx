@@ -24,6 +24,9 @@ vi.mock('../api/client', () => ({
     buyOrder: vi.fn(),
     sellOrder: vi.fn(),
     runMonteCarlo: vi.fn(),
+    listFavorites: vi.fn(),
+    addFavorite: vi.fn(),
+    removeFavorite: vi.fn(),
   },
 }));
 
@@ -118,6 +121,10 @@ beforeEach(() => {
   vi.mocked(api.listOrders).mockResolvedValue([]);
   vi.mocked(api.buyOrder).mockRejectedValue(new Error('offline'));
   vi.mocked(api.sellOrder).mockRejectedValue(new Error('offline'));
+  vi.mocked(api.runMonteCarlo).mockRejectedValue(new Error('offline'));
+  vi.mocked(api.listFavorites).mockResolvedValue({ symbols: [] });
+  vi.mocked(api.addFavorite).mockResolvedValue({ symbols: ['RELIANCE'] });
+  vi.mocked(api.removeFavorite).mockResolvedValue({ symbols: [] });
 });
 
 describe('App shell and navigation', () => {
@@ -153,6 +160,19 @@ describe('App shell and navigation', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /settings/i }));
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+  });
+});
+
+describe('Stocks page favorites', () => {
+  it('shows empty favorites message and toggles star', async () => {
+    vi.mocked(api.listStocks).mockResolvedValue({ total: 501, stocks: [stock] });
+    vi.mocked(api.listFavorites).mockResolvedValue({ symbols: [] });
+    vi.mocked(api.addFavorite).mockResolvedValue({ symbols: ['RELIANCE'] });
+    renderWithQuery(<StocksPage onSelectSymbol={() => undefined} />);
+    fireEvent.click(screen.getByRole('button', { name: /favorites/i }));
+    expect(await screen.findByText('No favorite stocks yet.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add favorite' }));
+    await waitFor(() => expect(api.addFavorite).toHaveBeenCalledWith('RELIANCE'));
   });
 });
 
@@ -229,10 +249,10 @@ describe('Stock detail', () => {
     renderWithQuery(<StockDetailPage symbol="RELIANCE" onBack={() => undefined} />);
 
     expect(await screen.findByText('Reliance Industries Ltd')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /launch chart/i })).toBeInTheDocument();
     expect(await screen.findByText('latest 20 trading days', { exact: false })).toBeInTheDocument();
     expect(screen.getByText('12 strategies')).toBeInTheDocument();
     expect(screen.getByText('ema_trend')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /run monte carlo simulation/i })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /load more history/i }));
     await waitFor(() => expect(vi.mocked(api.getOHLCV).mock.calls.length).toBeGreaterThanOrEqual(2));

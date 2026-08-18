@@ -13,6 +13,7 @@ import type {
   SystemStatus,
   MonteCarloRequest,
   MonteCarloDashboardResponse,
+  FavoritesResponse,
 } from '../types/api';
 
 const BASE_URL = '/api/v1';
@@ -125,5 +126,21 @@ export const api = {
       `/stocks/${encodeURIComponent(symbol)}/monte-carlo`,
       { method: 'POST', body: JSON.stringify(body) },
     );
+  },
+
+  listFavorites() {
+    return request<FavoritesResponse>('/favorites');
+  },
+
+  addFavorite(symbol: string) {
+    return request<FavoritesResponse>(`/favorites/${encodeURIComponent(symbol)}`, {
+      method: 'POST',
+    });
+  },
+
+  removeFavorite(symbol: string) {
+    return request<FavoritesResponse>(`/favorites/${encodeURIComponent(symbol)}`, {
+      method: 'DELETE',
+    });
   },
 };

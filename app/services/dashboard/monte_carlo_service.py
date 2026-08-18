@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
+import numpy as np
+
 from app.backtesting.monte_carlo import MonteCarloConfig, MonteCarloEngine
 from app.backtesting.monte_carlo.pipeline import load_trades_from_replay
 from app.backtesting.monte_carlo.schemas import (
@@ -16,7 +19,9 @@ from app.backtesting.replay_engine.adapters import ParquetFeatureFrameAdapter, P
 from app.backtesting.walk_forward import WalkForwardConfig, WalkForwardEngine
 from app.core.config import Settings, get_settings
 from app.market_data.utils.symbols import parquet_basename
+from app.services.dashboard.horizon_outlook import compute_horizon_bands, daily_returns_from_frame
 from app.services.dashboard.schemas import (
+    HorizonOutlook,
     MonteCarloDashboardRequest,
     MonteCarloDashboardResponse,
     NextDayOutlook,
@@ -105,6 +110,34 @@ class DashboardMonteCarloService:
             "historical completed trades. Simulation count does not increase sample size.",
         )
         outlook = self._next_day_outlook(result, base, strategy, trade_source)
+        current_price, daily_returns, horizons = self._horizon_inputs(
+            parquet,
+            request,
+        )
+        horizon_rows = [
+            HorizonOutlook(
+                trading_days=band.trading_days,
+                label=band.label,
+                supported=band.supported,
+                message=band.message,
+                mean_price=band.mean_price,
+                median_price=band.median_price,
+                lower_price=band.lower_price,
+                upper_price=band.upper_price,
+                expected_return_pct=band.expected_return_pct,
+                lower_return_pct=band.lower_return_pct,
+                upper_return_pct=band.upper_return_pct,
+                probability_negative_return=band.probability_negative_return,
+                method=band.method,
+            )
+            for band in compute_horizon_bands(
+                daily_returns,
+                current_price=current_price,
+                horizons=horizons,
+                simulations=request.simulations,
+                random_seed=request.random_seed,
+            )
+        ]
         return MonteCarloDashboardResponse(
             symbol=base,
             strategy=strategy,
@@ -128,9 +161,27 @@ class DashboardMonteCarloService:
             period=period or result.period,
             timeframe=request.timeframe,
             next_day_outlook=outlook,
+            current_price=current_price if current_price > 0 else None,
+            historical_daily_return_count=len(daily_returns),
+            horizon_outlook=horizon_rows,
             warnings=all_warnings,
             resampling_limitation=RESAMPLING_LIMITATION,
         )
+
+    def _horizon_inputs(
+        self,
+        parquet: Path,
+        request: MonteCarloDashboardRequest,
+    ) -> tuple[float, np.ndarray, list[int]]:
+        horizons = sorted({int(h) for h in request.horizons if int(h) > 0}) or [1, 2, 5]
+        try:
+            frame = pd.read_parquet(parquet)
+        except Exception:
+            return 0.0, np.array([], dtype=float), horizons
+        daily_returns = daily_returns_from_frame(frame)
+        closes = frame.sort_values("date")["close"].astype(float)
+        current_price = float(closes.iloc[-1]) if not closes.empty else 0.0
+        return current_price, daily_returns, horizons
 
     def _oos_trades(
         self,

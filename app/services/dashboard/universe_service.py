@@ -74,12 +74,19 @@ class UniverseService:
         symbol: str,
         *,
         gateway: MarketDataGateway | None = None,
+        favorites: set[str] | None = None,
     ) -> StockSummary | None:
         base = parquet_basename(symbol).upper()
         for csv_symbol, company_name in _load_csv_candidates(self._symbols_file):
             if csv_symbol == base:
                 yahoo = f"{csv_symbol}.NS"
-                return self._build_summary(csv_symbol, yahoo, company_name, gateway=gateway)
+                return self._build_summary(
+                    csv_symbol,
+                    yahoo,
+                    company_name,
+                    gateway=gateway,
+                    favorites=favorites,
+                )
         return None
 
     def count(self) -> int:

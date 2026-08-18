@@ -10,11 +10,13 @@ from app.api.deps import get_app_settings, get_market_data_gateway
 from app.core.config import Settings
 from app.market_data.services.market_data_gateway import MarketDataGateway
 from app.schemas.responses import SuccessResponse
+from app.services.dashboard.favorites_service import get_favorites_service
 from app.services.dashboard.market_service import get_market_service
 from app.services.dashboard.monte_carlo_service import get_monte_carlo_service
 from app.services.dashboard.paper_trading_service import get_paper_book
 from app.services.dashboard.portfolio_service import PortfolioService
 from app.services.dashboard.schemas import (
+    FavoritesResponse,
     MonteCarloDashboardRequest,
     MonteCarloDashboardResponse,
     OHLCVResponse,
@@ -36,6 +38,24 @@ from app.services.dashboard.universe_service import get_universe_service
 router = APIRouter(tags=["dashboard"])
 
 
+@router.get("/favorites", response_model=SuccessResponse[FavoritesResponse])
+def list_favorites() -> SuccessResponse[FavoritesResponse]:
+    symbols = get_favorites_service().list_symbols()
+    return SuccessResponse(data=FavoritesResponse(symbols=symbols))
+
+
+@router.post("/favorites/{symbol}", response_model=SuccessResponse[FavoritesResponse])
+def add_favorite(symbol: str) -> SuccessResponse[FavoritesResponse]:
+    symbols = get_favorites_service().add(symbol)
+    return SuccessResponse(data=FavoritesResponse(symbols=symbols), message=f"Added {symbol.upper()}")
+
+
+@router.delete("/favorites/{symbol}", response_model=SuccessResponse[FavoritesResponse])
+def remove_favorite(symbol: str) -> SuccessResponse[FavoritesResponse]:
+    symbols = get_favorites_service().remove(symbol)
+    return SuccessResponse(data=FavoritesResponse(symbols=symbols), message=f"Removed {symbol.upper()}")
+
+
 @router.get("/stocks", response_model=SuccessResponse[StockListResponse])
 def list_stocks(
     q: str = Query(default="", max_length=64),
@@ -43,6 +63,8 @@ def list_stocks(
     gateway: MarketDataGateway = Depends(get_market_data_gateway),
 ) -> SuccessResponse[StockListResponse]:
     book = get_paper_book()
+    favorites = set(get_favorites_service().list_symbols())
+    book.favorites = favorites
     holdings = {p.symbol for p in book.broker.snapshot().positions.values() if p.is_open}
     universe = get_universe_service()
     stocks = universe.list_stocks(
@@ -50,7 +72,7 @@ def list_stocks(
         query=q,
         holdings=holdings,
         watchlist=book.watchlist,
-        favorites=book.favorites,
+        favorites=favorites,
         limit=limit,
     )
     return SuccessResponse(data=StockListResponse(total=universe.count(), stocks=stocks))
@@ -61,7 +83,8 @@ def get_stock(
     symbol: str,
     gateway: MarketDataGateway = Depends(get_market_data_gateway),
 ) -> SuccessResponse[StockSummary]:
-    stock = get_universe_service().get_stock(symbol, gateway=gateway)
+    favorites = set(get_favorites_service().list_symbols())
+    stock = get_universe_service().get_stock(symbol, gateway=gateway, favorites=favorites)
     if stock is None:
         raise HTTPException(status_code=404, detail=f"Symbol '{symbol}' not in supported universe")
     return SuccessResponse(data=stock)

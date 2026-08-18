@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type MouseEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { useFavorites } from '../hooks/useFavorites';
 import { formatCurrency, formatPct, formatTs, pnlClass } from '../utils/format';
-import { loadFavorites, loadWatchlist, saveFavorites, saveWatchlist } from '../utils/settings';
+import { loadWatchlist, saveWatchlist } from '../utils/settings';
 import type { StockSummary } from '../types/api';
 
 interface StocksPageProps {
@@ -17,8 +18,8 @@ export function StocksPage({ onSelectSymbol }: StocksPageProps) {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [filter, setFilter] = useState<'all' | 'favorites' | 'watchlist' | 'holdings'>('all');
   const [sector, setSector] = useState('all');
-  const [favorites, setFavorites] = useState(() => loadFavorites());
   const [watchlist, setWatchlist] = useState(() => loadWatchlist());
+  const { favorites, toggleFavorite } = useFavorites();
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['stocks', ''],
@@ -59,12 +60,9 @@ export function StocksPage({ onSelectSymbol }: StocksPageProps) {
     }
   }
 
-  function toggleFav(symbol: string) {
-    const next = new Set(favorites);
-    if (next.has(symbol)) next.delete(symbol);
-    else next.add(symbol);
-    setFavorites(next);
-    saveFavorites(next);
+  function toggleFav(event: MouseEvent, symbol: string) {
+    event.stopPropagation();
+    toggleFavorite(symbol);
   }
 
   function toggleWatch(symbol: string) {
@@ -118,7 +116,11 @@ export function StocksPage({ onSelectSymbol }: StocksPageProps) {
         </div>
       )}
 
-      {!isLoading && !isError && (
+      {!isLoading && !isError && filter === 'favorites' && rows.length === 0 && (
+        <div className="panel p-4 text-sm text-slate-500">No favorite stocks yet.</div>
+      )}
+
+      {!isLoading && !isError && rows.length > 0 && (
         <div className="panel max-h-[calc(100vh-12rem)] overflow-auto">
           <table className="w-full text-left text-sm">
             <thead className="sticky top-0 bg-terminal-panel">
@@ -136,7 +138,12 @@ export function StocksPage({ onSelectSymbol }: StocksPageProps) {
               {rows.map((row) => (
                 <tr key={row.symbol} className="border-b border-terminal-border/40 hover:bg-slate-800/40">
                   <td className="px-2 py-1.5">
-                    <button type="button" className="text-xs text-slate-500" onClick={() => toggleFav(row.symbol)}>
+                    <button
+                      type="button"
+                      className="text-xs text-slate-500"
+                      aria-label={favorites.has(row.symbol) ? 'Remove favorite' : 'Add favorite'}
+                      onClick={(e) => toggleFav(e, row.symbol)}
+                    >
                       {favorites.has(row.symbol) ? '★' : '☆'}
                     </button>
                     <button type="button" className="ml-1 text-xs text-slate-500" onClick={() => toggleWatch(row.symbol)}>

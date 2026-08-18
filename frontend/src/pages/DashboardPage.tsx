@@ -1,8 +1,7 @@
 import { KPICards } from '../components/dashboard/KPICards';
 import { StockSelector } from '../components/dashboard/StockSelector';
-import { Chart } from '../components/dashboard/Chart';
+import { StockAnalysisWorkspace } from '../components/stock/StockAnalysisWorkspace';
 import { QuickTrade } from '../components/dashboard/QuickTrade';
-import { Strategies } from '../components/dashboard/Strategies';
 import { TimeframeMatrix } from '../components/dashboard/TimeframeMatrix';
 import { Assumption } from '../components/dashboard/Assumption';
 import { Positions } from '../components/dashboard/Positions';
@@ -19,7 +18,6 @@ export function DashboardPage({
   symbol,
   timeframe,
   onSymbolChange,
-  onTimeframeChange,
 }: DashboardPageProps) {
   return (
     <div className="space-y-4">
@@ -30,11 +28,7 @@ export function DashboardPage({
           <StockSelector symbol={symbol} onSymbolChange={onSymbolChange} />
         </div>
         <div className="lg:col-span-9">
-          <Chart
-            symbol={symbol}
-            timeframe={timeframe}
-            onTimeframeChange={onTimeframeChange}
-          />
+          <StockAnalysisWorkspace symbol={symbol} variant="embedded" showTradePanel={false} />
         </div>
       </div>
 
@@ -43,8 +37,6 @@ export function DashboardPage({
         <Assumption symbol={symbol} timeframe={timeframe} />
         <TimeframeMatrix symbol={symbol} />
       </div>
-
-      <Strategies symbol={symbol} timeframe={timeframe} />
 
       <Positions />
     </div>
