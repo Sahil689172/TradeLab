@@ -25,8 +25,9 @@ function StrategyRow({ row }: { row: StrategySignalRow }) {
       <td className={`px-3 py-2 font-mono text-sm font-semibold ${signalClass(row.signal)}`}>
         {row.signal}
       </td>
-      <td className="px-3 py-2 font-mono text-sm text-slate-300">
-        {row.confidence.toFixed(0)}%
+      <td className="px-3 py-2 font-mono text-sm text-slate-300" title={row.confidence_label}>
+        {row.confidence.toFixed(0)}
+        <span className="ml-1 text-[10px] text-slate-500">score</span>
       </td>
       <td className="px-3 py-2 text-xs text-slate-500">{row.strength}</td>
       <td className="px-3 py-2 text-xs text-slate-500">{row.status}</td>
@@ -73,7 +74,7 @@ export function Strategies({ symbol, timeframe }: StrategiesProps) {
               <tr className="border-b border-terminal-border text-[11px] uppercase tracking-wider text-slate-500">
                 <th className="px-3 py-2">Strategy</th>
                 <th className="px-3 py-2">Signal</th>
-                <th className="px-3 py-2">Confidence</th>
+                <th className="px-3 py-2">Score</th>
                 <th className="px-3 py-2">Strength</th>
                 <th className="px-3 py-2">Status</th>
               </tr>

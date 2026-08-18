@@ -29,15 +29,17 @@ function PositionTableRow({ row }: { row: PositionRow }) {
         {formatCurrency(row.ltp)}
       </td>
       <td className="px-3 py-2 font-mono text-sm">
+        {formatCurrency(row.invested_value)}
+      </td>
+      <td className="px-3 py-2 font-mono text-sm">
         {formatCurrency(row.current_value)}
       </td>
       <td className={`px-3 py-2 font-mono text-sm ${pnlClass(row.pnl)}`}>
         {formatCurrency(row.pnl)}
-        <span className="ml-1 text-xs">({row.pnl_pct.toFixed(1)}%)</span>
+        <span className="ml-1 text-xs">({(row.pnl_pct * 100).toFixed(1)}%)</span>
       </td>
-      <td className="px-3 py-2 text-xs text-slate-500">
-        {row.strategy_name || '—'}
-      </td>
+      <td className="px-3 py-2 font-mono text-xs">{formatCurrency(row.stop_loss)}</td>
+      <td className="px-3 py-2 font-mono text-xs">{formatCurrency(row.target)}</td>
     </tr>
   );
 }
@@ -82,9 +84,11 @@ export function Positions() {
                 <th className="px-3 py-2">Qty</th>
                 <th className="px-3 py-2">Avg Price</th>
                 <th className="px-3 py-2">LTP</th>
-                <th className="px-3 py-2">Value</th>
+                <th className="px-3 py-2">Invested</th>
+                <th className="px-3 py-2">Current</th>
                 <th className="px-3 py-2">P&L</th>
-                <th className="px-3 py-2">Strategy</th>
+                <th className="px-3 py-2">Stop</th>
+                <th className="px-3 py-2">Target</th>
               </tr>
             </thead>
             <tbody>

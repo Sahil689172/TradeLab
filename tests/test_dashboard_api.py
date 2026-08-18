@@ -158,3 +158,130 @@ def test_system_status(client, api_gateway) -> None:
     data = response.json()["data"]
     assert data["paper_trading"] is True
     assert data["universe_size"] == 501
+
+
+def _write_daily_parquet(test_settings, rows: int = 40) -> None:
+    ohlcv_dir = test_settings.parquet_storage_dir
+    ohlcv_dir.mkdir(parents=True, exist_ok=True)
+    frame = pd.DataFrame(
+        {
+            "date": pd.date_range("2020-01-01", periods=rows, freq="B"),
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.5,
+            "adj_close": 100.5,
+            "volume": 1_000_000.0,
+        },
+    )
+    frame.to_parquet(ohlcv_dir / "RELIANCE.parquet", index=False)
+
+
+def test_list_stocks_returns_complete_universe(client, api_gateway) -> None:
+    _override(client, api_gateway)
+    response = client.get("/api/v1/stocks?limit=501")
+    _clear(client)
+    payload = response.json()["data"]
+    assert payload["total"] == 501
+    assert len(payload["stocks"]) == 501
+    assert len({row["symbol"] for row in payload["stocks"]}) == 501
+
+
+def test_ohlcv_default_latest_20_days(client, api_gateway, test_settings) -> None:
+    _override(client, api_gateway)
+    client.post("/api/v1/market/bootstrap/RELIANCE")
+    _write_daily_parquet(test_settings, rows=40)
+    response = client.get("/api/v1/stocks/RELIANCE/ohlcv?interval=1D")
+    _clear(client)
+    data = response.json()["data"]
+    assert len(data["bars"]) == 20
+    assert data["has_more"] is True
+    dates = [bar["date"][:10] for bar in data["bars"]]
+    assert dates == sorted(dates)
+    assert len(set(dates)) == 20
+
+
+def test_ohlcv_fetch_older_no_duplicate_candles(client, api_gateway, test_settings) -> None:
+    _override(client, api_gateway)
+    client.post("/api/v1/market/bootstrap/RELIANCE")
+    _write_daily_parquet(test_settings, rows=40)
+    first = client.get("/api/v1/stocks/RELIANCE/ohlcv?interval=1D&limit=20")
+    oldest = first.json()["data"]["oldest_bar_timestamp"]
+    older = client.get(
+        "/api/v1/stocks/RELIANCE/ohlcv",
+        params={"interval": "1D", "limit": 20, "before": oldest},
+    )
+    _clear(client)
+    first_dates = [bar["date"][:10] for bar in first.json()["data"]["bars"]]
+    older_dates = [bar["date"][:10] for bar in older.json()["data"]["bars"]]
+    assert older.json()["data"]["bars"]
+    assert set(first_dates).isdisjoint(set(older_dates))
+    combined = older_dates + first_dates
+    assert len(combined) == len(set(combined))
+    assert combined == sorted(combined)
+
+
+def test_strategy_analysis_includes_all_registry_strategies(
+    client, api_gateway, test_settings,
+) -> None:
+    _override(client, api_gateway)
+    client.post("/api/v1/market/bootstrap/RELIANCE")
+    _write_daily_parquet(test_settings, rows=120)
+    response = client.get("/api/v1/strategies/RELIANCE/analysis?timeframe=1D")
+    _clear(client)
+    rows = response.json()["data"]["strategies"]
+    names = {row["strategy"] for row in rows}
+    assert len(names) >= 12
+    assert "recommended_action" in rows[0]
+    assert rows[0]["confidence_label"] == "Historical/Model Confidence"
+
+
+def test_buy_rejected_invalid_stop_loss(client, api_gateway) -> None:
+    _override(client, api_gateway)
+    reset_paper_book()
+    response = client.post(
+        "/api/v1/orders/buy",
+        json={
+            "symbol": "RELIANCE",
+            "quantity": 1,
+            "order_type": "MARKET",
+            "price": 2500.0,
+            "stop_loss": 2600.0,
+            "target": 2700.0,
+        },
+    )
+    _clear(client)
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["accepted"] is False
+    assert "Stop loss" in payload["message"]
+
+
+def test_filled_order_persists_stop_and_target(client, api_gateway) -> None:
+    _override(client, api_gateway)
+    reset_paper_book()
+    client.post("/api/v1/market/bootstrap/RELIANCE")
+    buy = client.post(
+        "/api/v1/orders/buy",
+        json={
+            "symbol": "RELIANCE",
+            "quantity": 5,
+            "order_type": "MARKET",
+            "price": 2500.0,
+            "stop_loss": 2400.0,
+            "target": 2600.0,
+        },
+    )
+    orders = client.get("/api/v1/orders")
+    portfolio = client.get("/api/v1/portfolio")
+    _clear(client)
+    assert buy.json()["data"]["accepted"] is True
+    row = orders.json()["data"][0]
+    assert row["stop_loss"] == 2400.0
+    assert row["target"] == 2600.0
+    assert row["status"] == "FILLED"
+    holding = portfolio.json()["data"]["positions"][0]
+    assert holding["symbol"] == "RELIANCE"
+    assert holding["stop_loss"] == 2400.0
+    assert holding["target"] == 2600.0
+

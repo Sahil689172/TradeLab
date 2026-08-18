@@ -8,7 +8,9 @@ import {
   ColorType,
 } from 'lightweight-charts';
 import { api } from '../../api/client';
-import { TIMEFRAMES, type Timeframe } from '../../types/api';
+import { type Timeframe } from '../../types/api';
+
+const CHART_INTERVALS: Timeframe[] = ['1D', '1W', '1M'];
 
 function toChartTime(dateStr: string, timeframe: Timeframe): CandlestickData['time'] {
   const d = new Date(dateStr);
@@ -116,7 +118,7 @@ export function Chart({ symbol, timeframe, onTimeframeChange }: ChartProps) {
           {symbol} · {data?.interval_label ?? timeframe}
         </span>
         <div className="flex gap-1">
-          {TIMEFRAMES.map((tf) => (
+          {CHART_INTERVALS.map((tf) => (
             <button
               key={tf}
               type="button"

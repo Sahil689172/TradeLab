@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_app_settings, get_market_data_gateway
@@ -34,12 +36,13 @@ router = APIRouter(tags=["dashboard"])
 @router.get("/stocks", response_model=SuccessResponse[StockListResponse])
 def list_stocks(
     q: str = Query(default="", max_length=64),
-    limit: int = Query(default=500, ge=1, le=501),
+    limit: int = Query(default=501, ge=1, le=501),
     gateway: MarketDataGateway = Depends(get_market_data_gateway),
 ) -> SuccessResponse[StockListResponse]:
     book = get_paper_book()
     holdings = {p.symbol for p in book.broker.snapshot().positions.values() if p.is_open}
-    stocks = get_universe_service().list_stocks(
+    universe = get_universe_service()
+    stocks = universe.list_stocks(
         gateway=gateway,
         query=q,
         holdings=holdings,
@@ -47,7 +50,7 @@ def list_stocks(
         favorites=book.favorites,
         limit=limit,
     )
-    return SuccessResponse(data=StockListResponse(total=len(stocks), stocks=stocks))
+    return SuccessResponse(data=StockListResponse(total=universe.count(), stocks=stocks))
 
 
 @router.get("/stocks/{symbol}", response_model=SuccessResponse[StockSummary])
@@ -65,10 +68,17 @@ def get_stock(
 def get_ohlcv(
     symbol: str,
     interval: str = Query(default="1D"),
-    limit: int = Query(default=300, ge=10, le=2000),
+    limit: int = Query(default=20, ge=1, le=2000),
+    before: datetime | None = Query(default=None),
     gateway: MarketDataGateway = Depends(get_market_data_gateway),
 ) -> SuccessResponse[OHLCVResponse]:
-    data = get_market_service().get_ohlcv(symbol, interval=interval, gateway=gateway, limit=limit)
+    data = get_market_service().get_ohlcv(
+        symbol,
+        interval=interval,
+        gateway=gateway,
+        limit=limit,
+        before=before,
+    )
     return SuccessResponse(data=data)
 
 
@@ -97,12 +107,14 @@ def list_strategies() -> SuccessResponse[list[StrategyCatalogItem]]:
 def strategy_analysis(
     symbol: str,
     timeframe: str = Query(default="1D"),
+    include_matrix: bool = Query(default=False),
     settings: Settings = Depends(get_app_settings),
 ) -> SuccessResponse[StrategyAnalysisResponse]:
     analysis = get_strategy_service().analyze(
         symbol,
         timeframe=timeframe,
         storage_dir=str(settings.parquet_storage_dir),
+        include_matrix=include_matrix,
     )
     return SuccessResponse(data=analysis)
 
@@ -116,6 +128,7 @@ def strategy_timeframes(
         symbol,
         timeframe="1D",
         storage_dir=str(settings.parquet_storage_dir),
+        include_matrix=True,
     )
     return SuccessResponse(data=analysis)
 

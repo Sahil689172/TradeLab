@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pandas as pd
-from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.market_data.services.market_data_gateway import MarketDataGateway
@@ -27,7 +26,7 @@ class DashboardMarketService:
         return self._last_refresh
 
     @property
-    refresh_in_progress(self) -> bool:
+    def refresh_in_progress(self) -> bool:
         return self._refresh_in_progress
 
     def normalize_symbol(self, symbol: str) -> str:
@@ -40,7 +39,8 @@ class DashboardMarketService:
         *,
         interval: str,
         gateway: MarketDataGateway,
-        limit: int = 500,
+        limit: int = 20,
+        before: datetime | None = None,
     ) -> OHLCVResponse:
         spec = get_timeframe(interval)
         yahoo = self.normalize_symbol(symbol)
@@ -62,10 +62,20 @@ class DashboardMarketService:
             )
         frame = gateway.get_history(yahoo)
         frame = resample_ohlcv(frame, rule=spec.resample_rule)
+        if "date" in frame.columns:
+            frame["date"] = pd.to_datetime(frame["date"])
+            frame = frame.sort_values("date").drop_duplicates(subset=["date"], keep="last")
+        if before is not None:
+            cutoff = pd.Timestamp(before)
+            if cutoff.tzinfo is not None:
+                cutoff = cutoff.tz_localize(None)
+            frame = frame[frame["date"] < cutoff]
+        total = int(len(frame))
         if limit > 0:
             frame = frame.tail(limit)
         bars = [_bar_from_row(row) for _, row in frame.iterrows()]
         last_ts = bars[-1].date if bars else None
+        oldest_ts = bars[0].date if bars else None
         return OHLCVResponse(
             symbol=parquet_basename(symbol).upper(),
             interval=spec.code,
@@ -73,6 +83,9 @@ class DashboardMarketService:
             bars=bars,
             delayed=True,
             last_bar_timestamp=last_ts,
+            oldest_bar_timestamp=oldest_ts,
+            has_more=total > len(bars),
+            total_bars=total,
             message="End-of-day Yahoo Finance history stored locally (not live tick data).",
         )
 

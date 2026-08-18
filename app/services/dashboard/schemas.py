@@ -77,6 +77,9 @@ class OHLCVResponse(BaseModel):
     source: str = "local_parquet"
     delayed: bool = True
     last_bar_timestamp: datetime | None = None
+    oldest_bar_timestamp: datetime | None = None
+    has_more: bool = False
+    total_bars: int = 0
     message: str = ""
 
 
@@ -86,6 +89,7 @@ class StrategyCatalogItem(BaseModel):
     name: str
     display_name: str
     description: str = ""
+    supported_timeframes: list[str] = Field(default_factory=list)
 
 
 class StrategySignalRow(BaseModel):
@@ -105,6 +109,11 @@ class StrategySignalRow(BaseModel):
     reasons: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     error: str | None = None
+    current_price: float | None = None
+    entry_price: float | None = None
+    stop_loss: float | None = None
+    target: float | None = None
+    recommended_action: str = "HOLD"
 
 
 class TimeframeBestStrategy(BaseModel):
@@ -121,6 +130,7 @@ class TimeframeBestStrategy(BaseModel):
     supporting_metric: str = ""
     sample_size: int = 0
     last_evaluated: datetime | None = None
+    evaluation_window: str = ""
     message: str = ""
 
 
@@ -204,6 +214,10 @@ class OrderRow(BaseModel):
     status: OrderStatus
     rejection_reason: str | None = None
     strategy_name: str = "paper_manual"
+    requested_price: float | None = None
+    execution_price: float | None = None
+    stop_loss: float | None = None
+    target: float | None = None
 
 
 class OrderRequest(BaseModel):

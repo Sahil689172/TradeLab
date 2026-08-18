@@ -10,6 +10,8 @@ from app.backtesting.order_execution.broker import SimulatedBroker
 from app.backtesting.order_execution.engine import OrderExecutionEngine
 from app.backtesting.order_execution.orders import MarketOrder, OrderSide, OrderStatus
 from app.backtesting.order_execution.schemas import ExecutionConfig, PositionSizingMode, RejectionReason
+from app.backtesting.portfolio_risk.limits import check_entry_limits
+from app.backtesting.portfolio_risk.schemas import PortfolioRiskLimits
 from app.market_data.utils.symbols import parquet_basename
 from app.services.dashboard.schemas import (
     OrderRequest,
@@ -35,6 +37,10 @@ class PaperOrderRecord:
     status: ApiOrderStatus
     rejection_reason: str | None = None
     strategy_name: str = "paper_manual"
+    requested_price: float | None = None
+    execution_price: float | None = None
+    stop_loss: float | None = None
+    target: float | None = None
 
 
 @dataclass
@@ -79,6 +85,9 @@ class PaperTradingBook:
                 order_type=request.order_type,
                 status=ApiOrderStatus.REJECTED,
                 rejection_reason=validation_error,
+                requested_price=price,
+                stop_loss=request.stop_loss,
+                target=request.target,
             )
             self.orders.insert(0, record)
             return OrderResponse(
@@ -115,9 +124,13 @@ class PaperTradingBook:
                 symbol=symbol,
                 side=side,
                 quantity=fill.quantity,
-                price=price,
+                price=float(fill.execution_price),
                 order_type=request.order_type,
                 status=ApiOrderStatus.FILLED,
+                requested_price=price,
+                execution_price=float(fill.execution_price),
+                stop_loss=request.stop_loss,
+                target=request.target,
             )
             self.orders.insert(0, record)
             from app.services.dashboard.portfolio_service import PortfolioService
@@ -141,6 +154,9 @@ class PaperTradingBook:
                 order_type=request.order_type,
                 status=ApiOrderStatus.REJECTED,
                 rejection_reason=str(exc),
+                requested_price=price,
+                stop_loss=request.stop_loss,
+                target=request.target,
             )
             self.orders.insert(0, record)
             return OrderResponse(
@@ -165,10 +181,37 @@ class PaperTradingBook:
             return "Stop loss must be below entry price for BUY"
         if request.target is not None and request.target <= price and side is ApiOrderSide.BUY:
             return "Target must be above entry price for BUY"
+        if request.stop_loss is not None and request.stop_loss <= price and side is ApiOrderSide.SELL:
+            return "Stop loss must be above exit price for SELL"
+        if request.target is not None and request.target >= price and side is ApiOrderSide.SELL:
+            return "Target must be below exit price for SELL"
         if side is ApiOrderSide.BUY:
             notional = price * request.quantity
             if notional > self.broker.cash + 1e-6:
                 return RejectionReason.INSUFFICIENT_CASH.value
+            snap = self.broker.snapshot()
+            open_positions = [p for p in snap.positions.values() if p.is_open]
+            already = any(p.symbol == symbol and p.is_open for p in snap.positions.values())
+            gross = sum(p.quantity * p.average_entry_price for p in open_positions)
+            symbol_notional = sum(
+                p.quantity * p.average_entry_price for p in open_positions if p.symbol == symbol
+            )
+            reason, message, _allowed = check_entry_limits(
+                limits=PortfolioRiskLimits(),
+                open_positions=len(open_positions),
+                already_holding=already,
+                equity=snap.equity or self.initial_capital,
+                gross_exposure=gross,
+                proposed_notional=notional,
+                symbol=symbol,
+                strategy="paper_manual",
+                symbol_notional=symbol_notional,
+                strategy_notional=gross,
+                drawdown_pct=0.0,
+                daily_loss_pct=0.0,
+            )
+            if reason is not None:
+                return message
         if side is ApiOrderSide.SELL:
             position = self.broker.get_position(symbol)
             if not position.is_open:
@@ -190,6 +233,10 @@ def _to_order_row(record: PaperOrderRecord) -> OrderRow:
         status=record.status,
         rejection_reason=record.rejection_reason,
         strategy_name=record.strategy_name,
+        requested_price=record.requested_price,
+        execution_price=record.execution_price,
+        stop_loss=record.stop_loss,
+        target=record.target,
     )
 
 

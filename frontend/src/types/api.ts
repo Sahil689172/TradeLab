@@ -56,6 +56,9 @@ export interface OHLCVResponse {
   source: string;
   delayed: boolean;
   last_bar_timestamp: string | null;
+  oldest_bar_timestamp: string | null;
+  has_more: boolean;
+  total_bars: number;
   message: string;
 }
 
@@ -63,6 +66,7 @@ export interface StrategyCatalogItem {
   name: string;
   display_name: string;
   description: string;
+  supported_timeframes: string[];
 }
 
 export interface StrategySignalRow {
@@ -80,6 +84,11 @@ export interface StrategySignalRow {
   reasons: string[];
   warnings: string[];
   error: string | null;
+  current_price: number | null;
+  entry_price: number | null;
+  stop_loss: number | null;
+  target: number | null;
+  recommended_action: string;
 }
 
 export interface TimeframeBestStrategy {
@@ -94,6 +103,7 @@ export interface TimeframeBestStrategy {
   supporting_metric: string;
   sample_size: number;
   last_evaluated: string | null;
+  evaluation_window: string;
   message: string;
 }
 
@@ -165,6 +175,10 @@ export interface OrderRow {
   status: OrderStatus;
   rejection_reason: string | null;
   strategy_name: string;
+  requested_price: number | null;
+  execution_price: number | null;
+  stop_loss: number | null;
+  target: number | null;
 }
 
 export interface OrderRequest {

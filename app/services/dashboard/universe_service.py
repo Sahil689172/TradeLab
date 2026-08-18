@@ -44,7 +44,7 @@ class UniverseService:
         holdings: set[str] | None = None,
         watchlist: set[str] | None = None,
         favorites: set[str] | None = None,
-        limit: int = 500,
+        limit: int = 501,
     ) -> list[StockSummary]:
         holdings = holdings or set()
         watchlist = watchlist or set()

@@ -56,7 +56,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  listStocks(q = '', limit = 500) {
+  listStocks(q = '', limit = 501) {
     const params = new URLSearchParams({ q, limit: String(limit) });
     return request<StockListResponse>(`/stocks?${params}`);
   },
@@ -65,8 +65,9 @@ export const api = {
     return request<StockSummary>(`/stocks/${encodeURIComponent(symbol)}`);
   },
 
-  getOHLCV(symbol: string, interval: string, limit = 300) {
+  getOHLCV(symbol: string, interval: string, limit = 20, before?: string) {
     const params = new URLSearchParams({ interval, limit: String(limit) });
+    if (before) params.set('before', before);
     return request<OHLCVResponse>(
       `/stocks/${encodeURIComponent(symbol)}/ohlcv?${params}`,
     );
@@ -83,8 +84,9 @@ export const api = {
     return request<StrategyCatalogItem[]>('/strategies');
   },
 
-  getStrategyAnalysis(symbol: string, timeframe: string) {
+  getStrategyAnalysis(symbol: string, timeframe: string, includeMatrix = false) {
     const params = new URLSearchParams({ timeframe });
+    if (includeMatrix) params.set('include_matrix', 'true');
     return request<StrategyAnalysisResponse>(
       `/strategies/${encodeURIComponent(symbol)}/analysis?${params}`,
     );

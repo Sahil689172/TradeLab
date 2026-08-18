@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import { loadUiSettings } from '../../utils/settings';
 
 function StatusIndicator({
   label,
@@ -20,10 +21,11 @@ function StatusIndicator({
 }
 
 export function StatusBar() {
+  const pollSeconds = loadUiSettings().autoRefreshSeconds;
   const { data, isLoading, isError } = useQuery({
     queryKey: ['system-status'],
     queryFn: () => api.getSystemStatus(),
-    refetchInterval: 30_000,
+    refetchInterval: pollSeconds > 0 ? pollSeconds * 1000 : 30_000,
   });
 
   return (

@@ -4,6 +4,7 @@ import type { DashboardSignal, TimeframeBestStrategy } from '../../types/api';
 
 interface TimeframeMatrixProps {
   symbol: string;
+  includeMatrix?: boolean;
 }
 
 function signalClass(signal: DashboardSignal | null): string {
@@ -44,18 +45,26 @@ function MatrixCell({ cell }: { cell: TimeframeBestStrategy }) {
         </p>
       )}
       {cell.confidence != null && (
-        <p className="font-mono text-[10px] text-slate-400">
-          {cell.confidence.toFixed(0)}%
+        <p className="font-mono text-[10px] text-slate-400" title={cell.confidence_label}>
+          {cell.confidence.toFixed(0)} score
+        </p>
+      )}
+      {cell.sample_size > 0 && (
+        <p className="font-mono text-[10px] text-slate-500">n={cell.sample_size}</p>
+      )}
+      {cell.evaluation_window && (
+        <p className="mt-0.5 truncate text-[9px] text-slate-600" title={cell.evaluation_window}>
+          {cell.evaluation_window}
         </p>
       )}
     </div>
   );
 }
 
-export function TimeframeMatrix({ symbol }: TimeframeMatrixProps) {
+export function TimeframeMatrix({ symbol, includeMatrix = false }: TimeframeMatrixProps) {
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['strategy-analysis', symbol, '1D'],
-    queryFn: () => api.getStrategyAnalysis(symbol, '1D'),
+    queryKey: ['strategy-analysis', symbol, '1D', includeMatrix],
+    queryFn: () => api.getStrategyAnalysis(symbol, '1D', includeMatrix),
     retry: false,
   });
 
@@ -64,7 +73,7 @@ export function TimeframeMatrix({ symbol }: TimeframeMatrixProps) {
   return (
     <div className="panel">
       <div className="panel-header">
-        <span className="panel-title">Timeframe Matrix</span>
+        <span className="panel-title">Best strategy by timeframe</span>
       </div>
 
       {isLoading && (

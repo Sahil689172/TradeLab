@@ -17,7 +17,7 @@ from app.services.dashboard.schemas import (
     StrategySignalRow,
     TimeframeBestStrategy,
 )
-from app.services.dashboard.timeframes import get_timeframe, resample_ohlcv
+from app.services.dashboard.timeframes import SUPPORTED_TIMEFRAMES, get_timeframe, resample_ohlcv
 from app.services.strategy_context import StrategyContextProvider
 from app.services.strategy_context.schemas import ContextProviderConfig
 from app.services.trade_recommendation.engine import TradeRecommendationEngine
@@ -47,6 +47,21 @@ STRATEGY_DISPLAY_NAMES: dict[str, str] = {
     "relative_strength": "Relative Strength",
 }
 
+STRATEGY_DESCRIPTIONS: dict[str, str] = {
+    "ema_trend": "Trend-following EMA crossover with professional filters.",
+    "supertrend": "Supertrend-based trend following on stored OHLCV.",
+    "break_retest": "Breakout and retest of structure levels.",
+    "momentum": "Momentum ranking and continuation signals.",
+    "donchian": "Donchian channel breakout system.",
+    "vwap": "VWAP mean-reversion / trend relative to session VWAP.",
+    "opening_range_breakout": "Opening-range breakout of the first session bars.",
+    "cpr": "Central Pivot Range bias and breakout.",
+    "darvas_box": "Darvas box breakout of recent high/low boxes.",
+    "previous_day_breakout": "Previous-day high/low breakout.",
+    "volume_breakout": "Volume-confirmed range breakout.",
+    "relative_strength": "Relative-strength ranking versus the universe.",
+}
+
 
 class StrategyAnalysisService:
     """Run registered strategies via existing context + recommendation engines."""
@@ -64,6 +79,8 @@ class StrategyAnalysisService:
                 StrategyCatalogItem(
                     name=name,
                     display_name=STRATEGY_DISPLAY_NAMES.get(name, name.replace("_", " ").title()),
+                    description=STRATEGY_DESCRIPTIONS.get(name, ""),
+                    supported_timeframes=list(SUPPORTED_TIMEFRAMES),
                 ),
             )
         return items
@@ -74,6 +91,7 @@ class StrategyAnalysisService:
         *,
         timeframe: str,
         storage_dir: str | None = None,
+        include_matrix: bool = False,
     ) -> StrategyAnalysisResponse:
         base = parquet_basename(symbol).upper()
         spec = get_timeframe(timeframe)
@@ -137,7 +155,11 @@ class StrategyAnalysisService:
                 ),
             )
 
-        matrix = self._timeframe_matrix(base, storage_dir=storage_dir)
+        matrix = (
+            self._timeframe_matrix(base, storage_dir=storage_dir)
+            if include_matrix
+            else []
+        )
         assumption = self._build_assumption(base, spec.code, rows, sample_size, evaluation_window, generated_at)
         return StrategyAnalysisResponse(
             symbol=base,
@@ -177,6 +199,16 @@ class StrategyAnalysisService:
                 recompute_confidence=True,
             )
             signal = _dashboard_signal(recommendation)
+            last_close = None
+            if "close" in features.columns and not features.empty:
+                last_close = float(features["close"].iloc[-1])
+            action = (
+                "BUY"
+                if signal is DashboardSignal.BUY
+                else "SELL"
+                if signal is DashboardSignal.SELL
+                else "HOLD"
+            )
             return StrategySignalRow(
                 strategy=name,
                 display_name=display,
@@ -190,6 +222,11 @@ class StrategyAnalysisService:
                 last_evaluated=generated_at,
                 reasons=list(recommendation.reasons[:5]),
                 warnings=list(recommendation.warnings),
+                current_price=last_close,
+                entry_price=recommendation.entry_price,
+                stop_loss=recommendation.stop_loss,
+                target=recommendation.target_1,
+                recommended_action=action,
             )
         except Exception as exc:
             return StrategySignalRow(
@@ -220,7 +257,12 @@ class StrategyAnalysisService:
                     ),
                 )
                 continue
-            partial = self.analyze(symbol, timeframe=spec.code, storage_dir=storage_dir)
+            partial = self.analyze(
+                symbol,
+                timeframe=spec.code,
+                storage_dir=storage_dir,
+                include_matrix=False,
+            )
             best = _pick_best_strategy(partial.strategies)
             rows.append(
                 TimeframeBestStrategy(
@@ -234,6 +276,7 @@ class StrategyAnalysisService:
                     supporting_metric=f"signal={best.signal.value}, confidence={best.confidence:.1f}" if best else "",
                     sample_size=best.sample_size if best else 0,
                     last_evaluated=best.last_evaluated if best else None,
+                    evaluation_window=partial.assumption.evaluation_window,
                 ),
             )
         return rows
