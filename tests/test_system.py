@@ -90,7 +90,9 @@ def test_database_initialization(test_settings) -> None:
     # Metadata tables for market data storage are created on init.
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
-    assert table_names == {"company_metadata", "ingestion_state"}
+    assert {"company_metadata", "ingestion_state"} <= table_names
+    # Collaboration rooms share the same metadata database.
+    assert {"chat_rooms", "chat_room_members", "chat_messages"} <= table_names
     assert Base.metadata is not None
 
     reset_db_state()

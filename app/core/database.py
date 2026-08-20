@@ -77,6 +77,7 @@ def init_db(settings: Settings | None = None) -> Engine:
 
     # Register ORM models before create_all.
     import app.market_data.models  # noqa: F401
+    import app.collab.models  # noqa: F401
 
     Base.metadata.create_all(bind=_engine)
     logger.info("Metadata database initialized at %s", cfg.metadata_db_path)

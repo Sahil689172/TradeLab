@@ -92,6 +92,63 @@ class Settings(BaseSettings):
         description="Base delay in seconds for exponential backoff between bootstrap retries",
     )
 
+    # Collaboration rooms (chat + shared paper portfolio)
+    collab_enabled: bool = Field(
+        default=True,
+        description="Enable collaborative rooms and the room websocket",
+    )
+    chat_history_limit: int = Field(
+        default=50,
+        ge=1,
+        le=500,
+        description="Messages replayed to a client when it joins a room",
+    )
+    room_default_capacity: int = Field(
+        default=2,
+        ge=1,
+        le=10,
+        description="Default member capacity for a new room",
+    )
+
+    # AI assistant (Gemini primary, Groq fallback)
+    ai_enabled: bool = Field(default=True, description="Enable the grounded room assistant")
+    ai_primary_provider: Literal["gemini", "groq"] = Field(
+        default="gemini",
+        description="Provider tried first; the other becomes the fallback",
+    )
+    gemini_api_key: str | None = Field(default=None, description="Google Gemini API key")
+    gemini_model: str = Field(
+        default="gemini-2.0-flash",
+        description="Gemini model id used for room replies",
+    )
+    groq_api_key: str | None = Field(default=None, description="Groq API key (fallback provider)")
+    groq_model: str = Field(
+        default="llama-3.3-70b-versatile",
+        description="Groq model id used for fallback replies",
+    )
+    ai_trigger: str = Field(
+        default="@ai",
+        description="Token in a chat message that routes it to the assistant",
+    )
+    ai_timeout_seconds: int = Field(
+        default=45,
+        ge=1,
+        le=300,
+        description="HTTP timeout per LLM provider request",
+    )
+    ai_max_tool_iterations: int = Field(
+        default=5,
+        ge=1,
+        le=12,
+        description="Maximum tool-call rounds before giving up on a turn",
+    )
+    ai_max_output_tokens: int = Field(
+        default=800,
+        ge=64,
+        le=8192,
+        description="Maximum tokens in a single AI reply (keeps cost predictable)",
+    )
+
     # Logging
     log_level: str = Field(default="INFO", description="Root log level")
     log_format: Literal["console", "json"] = Field(
@@ -123,6 +180,11 @@ class Settings(BaseSettings):
     def is_sqlite(self) -> bool:
         """Return True when the configured database is SQLite."""
         return self.database_url.startswith("sqlite")
+
+    @property
+    def is_ai_configured(self) -> bool:
+        """Return True when at least one LLM provider has an API key."""
+        return bool(self.gemini_api_key or self.groq_api_key)
 
     @property
     def metadata_db_path(self) -> Path:

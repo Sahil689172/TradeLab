@@ -7,6 +7,7 @@ This repository contains:
 - **Phase A1** — FastAPI application foundation
 - **Phase A2.1** — Market data storage infrastructure (SQLite + Parquet)
 - **Phase A2.2** — Yahoo Finance ingestion, bootstrap, incremental sync, market API
+- **Phase C1** — Collaborative rooms: shared chat, shared paper portfolio, grounded AI assistant
 
 ## Features
 
@@ -40,6 +41,24 @@ This repository contains:
 - Gateway orchestration for bootstrap/update/metadata refresh
 - Market ingestion API endpoints under `/api/v1/market/*`
 - Mock-based provider and API test coverage
+
+### Phase C1 — Collaborative Rooms
+
+Two people share one chat **and one paper portfolio**, with an AI assistant
+that reads real stored market data and the room's live positions.
+
+- Room lifecycle with membership and capacity (`/api/v1/collab/rooms`)
+- Live WebSocket channel per room (`/api/v1/collab/ws/rooms/{room_id}`)
+- One shared `SimulatedBroker` book per room; orders serialized per room
+- Every fill **and rejection** logged into chat as an `ORDER_EVENT`
+- Structured trade ideas stamped with `price_at_post` so calls stay scoreable
+- Grounded AI with seven **read-only** tools over `MarketDataGateway`,
+  the shared portfolio, the order log, and the strategy engine
+- Gemini primary with Groq fallback; if both fail the assistant says so
+  rather than inventing numbers
+- **The AI has no order tool** — only a human can buy or sell
+
+See [`docs/collab_rooms.md`](docs/collab_rooms.md) for the protocol and design notes.
 
 ## Requirements
 
@@ -151,6 +170,12 @@ TradeLab/
 │   │   ├── validators/        # OHLCV validation
 │   │   ├── services/          # Gateway + bootstrap/update services
 │   │   └── exceptions.py
+│   ├── collab/                # Phase C1 collaborative rooms
+│   │   ├── models.py          # chat_rooms, chat_room_members, chat_messages
+│   │   ├── repository.py      # CRUD only
+│   │   ├── room_service.py    # Public surface (membership, messages, orders)
+│   │   ├── connection_manager.py
+│   │   └── ai/                # Read-only tools, Gemini/Groq providers, agent
 │   ├── middleware/
 │   ├── schemas/               # API response models
 │   └── main.py
@@ -159,6 +184,7 @@ TradeLab/
 │   └── logs/
 ├── tests/
 │   ├── test_system.py
+│   ├── collab/                # Room, AI tool, provider, and websocket tests
 │   └── market_data/           # Storage layer tests
 ├── docs/                      # Architecture documentation
 ├── requirements.txt
@@ -179,6 +205,15 @@ gateway = MarketDataGateway(session)
 
 Repositories and validators remain internal implementation details.
 
-## Out of scope (not in A2.2)
+## Notes on the AI assistant
 
-indicators, feature engineering, ML, Monte Carlo, backtesting, paper trading, schedulers, caching, and non-market modules.
+The assistant is **read-only by construction**: its tool registry
+(`app/collab/ai/tools.py`) contains no write operations, and a test asserts
+this so it cannot regress. It reads stored end-of-day history — not live ticks
+— and is instructed to say so when the answer depends on how current a number
+is. All trading is simulated via `SimulatedBroker`; nothing here places real
+orders or constitutes investment advice.
+
+LLM calls are the one cost no cloud free tier covers. Replies are capped by
+`AI_MAX_OUTPUT_TOKENS`, and only messages containing `AI_TRIGGER` reach the
+model, so ordinary conversation between two people costs nothing.

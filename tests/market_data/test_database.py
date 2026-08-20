@@ -30,14 +30,16 @@ def test_metadata_database_initializes(storage_settings) -> None:
 
 
 def test_required_tables_exist(storage_settings) -> None:
-    """Only company_metadata and ingestion_state tables are created."""
+    """Market data tables are created on init (alongside collab tables)."""
     ensure_storage_directories(storage_settings)
     reset_db_state()
     engine = init_db(storage_settings)
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
 
-    assert table_names == {"company_metadata", "ingestion_state"}
+    assert {"company_metadata", "ingestion_state"} <= table_names
     assert CompanyMetadataModel.__tablename__ in table_names
     assert IngestionStateModel.__tablename__ in table_names
-    assert len(Base.metadata.tables) == 2
+    # Market data owns 2 tables; the collaboration module registers 3 more
+    # on the same metadata database.
+    assert len(Base.metadata.tables) == 5
