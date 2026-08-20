@@ -12,11 +12,23 @@ from __future__ import annotations
 import httpx
 from sqlalchemy.orm import Session
 
-from app.collab.ai.providers import GeminiProvider, GroqProvider, LLMProvider
+from app.collab.ai.providers import GeminiProvider, GroqProvider, LLMProvider, redact
 from app.collab.ai.tools import ToolContext
-from app.collab.exceptions import AIDisabledError, AINotConfiguredError, AIProviderError
+from app.collab.exceptions import (
+    AIAuthError,
+    AIDisabledError,
+    AINotConfiguredError,
+    AIProviderError,
+)
 from app.collab.room_service import RoomService
-from app.collab.schemas import AIReply, AISource, AIStatus, MessageKind
+from app.collab.schemas import (
+    AIProviderFailure,
+    AIReply,
+    AISource,
+    AIStatus,
+    MessageKind,
+    utc_now,
+)
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.market_data.services.market_data_gateway import MarketDataGateway
@@ -25,12 +37,16 @@ logger = get_logger(__name__)
 
 MAX_CONTEXT_MESSAGES = 12
 
+#: Keeps a surfaced reason short enough to read in a UI badge.
+MAX_REASON_CHARS = 200
+
 
 class RoomAIAgent:
     """Grounded assistant bound to one room."""
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        self._last_error: AIProviderFailure | None = None
 
     # -- provider wiring -------------------------------------------------
 
@@ -72,7 +88,68 @@ class RoomAIAgent:
             groq_model=self._settings.groq_model,
             trigger=self._settings.ai_trigger,
             read_only=True,
+            last_error=self._last_error,
         )
+
+    # -- failure reporting -----------------------------------------------
+
+    def _record_failure(self, provider: LLMProvider, exc: Exception) -> AIProviderFailure:
+        """Store the newest provider failure for ``ai/status`` to surface.
+
+        The reason is truncated and stripped of key material so it can be
+        rendered in the room UI without leaking anything.
+        """
+        is_auth = isinstance(exc, AIAuthError)
+        reason = redact(str(exc), provider._api_key)  # noqa: SLF001 - redaction needs the key
+        failure = AIProviderFailure(
+            provider=provider.source.value,
+            reason=reason[:MAX_REASON_CHARS],
+            hint=provider.auth_hint if is_auth else None,
+            is_auth_error=is_auth,
+            occurred_at=utc_now(),
+        )
+        self._last_error = failure
+        return failure
+
+    def clear_last_error(self) -> None:
+        """Forget the recorded failure after a provider answers successfully."""
+        self._last_error = None
+
+    async def validate_providers(self) -> list[AIProviderFailure]:
+        """Probe every configured provider once and log what is broken.
+
+        Called at startup so an invalid key is obvious in the boot log rather
+        than on someone's first ``@ai``. Never raises: a provider that cannot
+        be reached at boot may still work later, and a dead key must not stop
+        the application from serving rooms.
+
+        Returns:
+            One failure per provider that did not accept its key.
+        """
+        failures: list[AIProviderFailure] = []
+        for provider in self.provider_chain():
+            name = provider.source.value
+            if not provider.key_looks_valid:
+                logger.warning(
+                    "%s key does not start with '%s': %s",
+                    provider.key_env_var,
+                    provider.key_prefix,
+                    provider.auth_hint,
+                )
+            try:
+                await provider.validate(timeout=float(self._settings.ai_timeout_seconds))
+            except AIAuthError as exc:
+                failures.append(self._record_failure(provider, exc))
+                logger.warning("AI provider %s rejected its key: %s", name, exc.hint)
+            except (AIProviderError, httpx.HTTPError) as exc:
+                failures.append(self._record_failure(provider, exc))
+                logger.warning("AI provider %s unreachable at startup: %s", name, exc)
+            except Exception as exc:  # noqa: BLE001 - startup must never fail here
+                failures.append(self._record_failure(provider, exc))
+                logger.warning("AI provider %s check failed: %s", name, exc)
+            else:
+                logger.info("AI provider %s key accepted (model %s)", name, provider.model)
+        return failures
 
     # -- turn execution --------------------------------------------------
 
@@ -140,15 +217,29 @@ class RoomAIAgent:
                         "AI primary failed, answered via fallback %s",
                         provider.source.value,
                     )
+                else:
+                    # Only a working primary clears the banner; a successful
+                    # fallback still means the primary needs attention.
+                    self.clear_last_error()
                 return reply
+            except AIAuthError as exc:
+                failure = self._record_failure(provider, exc)
+                errors.append(f"{provider.source.value}: {failure.reason}")
+                logger.warning(
+                    "AI provider %s rejected its key: %s",
+                    provider.source.value,
+                    exc.hint,
+                )
+                continue
             except (AIProviderError, httpx.HTTPError, httpx.TimeoutException) as exc:
-                message = f"{provider.source.value}: {exc}"
+                failure = self._record_failure(provider, exc)
+                message = f"{provider.source.value}: {failure.reason}"
                 errors.append(message)
-                logger.warning("AI provider failed — %s", message)
+                logger.warning("AI provider failed: %s", message)
                 continue
             except Exception as exc:  # noqa: BLE001 - never break the room
-                message = f"{provider.source.value}: unexpected error: {exc}"
-                errors.append(message)
+                failure = self._record_failure(provider, exc)
+                errors.append(f"{provider.source.value}: unexpected error: {failure.reason}")
                 logger.exception("Unexpected AI provider failure")
                 continue
 

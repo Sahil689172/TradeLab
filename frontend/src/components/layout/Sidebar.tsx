@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { id: 'portfolio', label: 'Portfolio', icon: '◫' },
   { id: 'orders', label: 'Orders', icon: '⇄' },
   { id: 'strategies', label: 'Strategies', icon: '◈' },
+  { id: 'rooms', label: 'Rooms', icon: '◎' },
   { id: 'settings', label: 'Settings', icon: '⚙' },
 ];
 

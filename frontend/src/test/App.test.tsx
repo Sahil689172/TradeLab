@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../App';
 import { StocksPage } from '../pages/StocksPage';
@@ -11,6 +12,7 @@ import { api } from '../api/client';
 import type { OHLCVBar, OrderRow, StockSummary, StrategyAnalysisResponse, StrategySignalRow } from '../types/api';
 
 vi.mock('../api/client', () => ({
+  request: vi.fn(),
   api: {
     getStock: vi.fn(),
     refreshMarketData: vi.fn(),
@@ -34,7 +36,11 @@ function renderWithQuery(ui: ReactElement) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/']}>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
 
 const stock: StockSummary = {

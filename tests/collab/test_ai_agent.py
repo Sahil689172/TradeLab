@@ -142,26 +142,6 @@ class TestTriggerParsing:
 # ---------------------------------------------------------------------------
 
 
-def _mock_transport(handler) -> Any:
-    return httpx.MockTransport(handler)
-
-
-@pytest.fixture()
-def patch_httpx(monkeypatch: pytest.MonkeyPatch):
-    """Route every AsyncClient created by providers through a mock transport."""
-
-    def _apply(handler) -> None:
-        original = httpx.AsyncClient.__init__
-
-        def _init(self, *args, **kwargs):
-            kwargs["transport"] = _mock_transport(handler)
-            original(self, *args, **kwargs)
-
-        monkeypatch.setattr(httpx.AsyncClient, "__init__", _init)
-
-    return _apply
-
-
 def _gemini_text_response(text: str) -> httpx.Response:
     return httpx.Response(
         200,

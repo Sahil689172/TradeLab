@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import httpx
 import pandas as pd
 import pytest
 
@@ -69,3 +70,19 @@ def seeded_client(client, api_gateway, test_settings: Settings):
     gateway.save_history("RELIANCE.NS", make_history())
     yield client
     client.app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def patch_httpx(monkeypatch: pytest.MonkeyPatch):
+    """Route every AsyncClient created by providers through a mock transport."""
+
+    def _apply(handler) -> None:
+        original = httpx.AsyncClient.__init__
+
+        def _init(self, *args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            original(self, *args, **kwargs)
+
+        monkeypatch.setattr(httpx.AsyncClient, "__init__", _init)
+
+    return _apply

@@ -97,6 +97,32 @@ so no vendor SDK is added.
   explicitly refuses to guess numbers. A dead API key never takes down a room,
   and never produces invented prices.
 
+### Failing early and saying why
+
+Two configuration mistakes look identical from a room — the assistant simply
+says it cannot answer — so both are caught at startup instead:
+
+* **A key of the wrong shape or a rejected key.** Each provider is probed once
+  with a free `GET /models` call. A 400/401/403 becomes an `AIAuthError`
+  carrying a one-line fix rather than a raw JSON blob, logged as a `WARNING`
+  naming the environment variable. An AI Studio key starts `AIza`; a Groq key
+  starts `gsk_`. A key that does not is flagged before the call is even made.
+* **A retired model id.** A valid key with a decommissioned `GROQ_MODEL` or
+  `GEMINI_MODEL` fails only on the first real call, with a 404. The same probe
+  compares the configured model against the account's model list and names
+  working alternatives.
+
+Keys are stripped of wrapping quotes and whitespace when settings load —
+pasting `GEMINI_API_KEY="AIza..."` into `.env` is otherwise an opaque 400.
+
+Neither check can stop the server: an unreachable provider at boot may be fine
+minutes later, and a broken assistant must never block chat or trading.
+
+`GET /ai/status` carries the most recent failure as `last_error`
+(`provider`, `reason`, `hint`, `is_auth_error`, `occurred_at`), with any key
+material redacted, so the room UI can say "Gemini key invalid" rather than
+"something went wrong".
+
 Wire formats differ enough that each provider owns its own tool-calling loop:
 Gemini uses `tools[].functionDeclarations` / `parts[].functionCall` /
 `parts[].functionResponse`; Groq is OpenAI-compatible with `tool_calls` and
@@ -149,6 +175,10 @@ Notes:
 * A DB session is opened per frame rather than held for the socket's lifetime,
   keeping SQLite connections short-lived under concurrent members.
 * One malformed frame returns an `error` and leaves the socket usable.
+* A refused join is **accepted and then closed** with code `4404` (no such
+  room) or `4409` (room full). Closing before the handshake completes would
+  make the server return a bare HTTP 403, which a browser reports as `1006` —
+  indistinguishable from a dropped network.
 * A message containing `@ai` (configurable via `AI_TRIGGER`) routes to the
   assistant. Plain chat never calls the model — that is what keeps token cost
   near zero while two people talk.
@@ -165,7 +195,7 @@ AI_PRIMARY_PROVIDER=gemini      # or groq
 GEMINI_API_KEY=                 # https://aistudio.google.com/apikey
 GEMINI_MODEL=gemini-2.0-flash
 GROQ_API_KEY=                   # https://console.groq.com/keys
-GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_MODEL=openai/gpt-oss-120b
 AI_TRIGGER=@ai
 AI_TIMEOUT_SECONDS=45
 AI_MAX_TOOL_ITERATIONS=5
@@ -179,19 +209,55 @@ covers.
 ## Quick start
 
 ```bash
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8080
 
 # Bootstrap a symbol first, or every price tool reports "unavailable"
-curl -X POST http://127.0.0.1:8000/api/v1/market/bootstrap/RELIANCE.NS
+curl -X POST http://127.0.0.1:8080/api/v1/market/bootstrap/RELIANCE.NS
 
 # Create a room
-curl -X POST http://127.0.0.1:8000/api/v1/collab/rooms \
+curl -X POST http://127.0.0.1:8080/api/v1/collab/rooms \
   -H 'Content-Type: application/json' \
   -d '{"name":"Nifty Desk","created_by":"sahil"}'
 
 # Two-terminal demo client (see scripts/collab_demo_client.py)
 python scripts/collab_demo_client.py --room <ROOM_ID> --user sahil
 ```
+
+## Frontend
+
+`/rooms` lists and creates rooms; `/rooms/:roomId` is the room itself — a real
+URL, so opening the same room in two tabs is the whole two-person demo.
+
+```
+frontend/src/
+├── types/collab.ts              # mirrors app/collab/schemas.py
+├── api/collab.ts                # REST: list, create, join, portfolio, ai/status
+├── hooks/useRoomSocket.ts       # the live channel
+├── components/room/
+│   ├── MembersPanel.tsx         # left:   roster + presence + connection state
+│   ├── ChatStream.tsx           # centre: transcript + composer
+│   ├── MessageRow.tsx           # one row per MessageKind
+│   └── PortfolioPanel.tsx       # right:  shared book, order + idea forms
+└── pages/RoomsPage.tsx, RoomPage.tsx
+```
+
+Each `MessageKind` renders differently because the transcript doubles as the
+decision log: a `TRADE_IDEA` leads with **price when posted**, an
+`ORDER_EVENT` is a green or red system row carrying its rejection reason, and
+an `AI_REPLY` shows the provider badge plus the tools that grounded it. There
+is no UI anywhere that lets the assistant place an order.
+
+Two socket behaviours are load-bearing:
+
+* **No local echo.** The server broadcasts the author's own message back, so
+  the composer never appends optimistically. Messages are keyed by
+  `message_id`, which also de-duplicates the history replayed on reconnect.
+  (`scripts/collab_demo_client.py` double-prints for want of this.)
+* **Refusals are not retried.** `4404` and `4409` end the connection with a
+  specific message; anything else reconnects with exponential backoff.
+
+The handle is held in React state, never `localStorage`, so two tabs on one
+machine can be two different people.
 
 ## Deploying on AWS free tier
 

@@ -22,7 +22,7 @@ from typing import Any
 import httpx
 
 from app.collab.ai.tools import TOOL_SPECS, ToolContext, execute_tool
-from app.collab.exceptions import AIProviderError
+from app.collab.exceptions import AIAuthError, AIProviderError
 from app.collab.schemas import AIReply, AISource
 from app.core.logging import get_logger
 
@@ -30,6 +30,53 @@ logger = get_logger(__name__)
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+#: Statuses that mean "the key is wrong", not "the service is unwell".
+AUTH_STATUSES = frozenset({400, 401, 403})
+
+#: Prefix each provider stamps on a valid key. Used only for an early
+#: warning — the provider remains the authority on whether a key works.
+GEMINI_KEY_PREFIX = "AIza"
+GROQ_KEY_PREFIX = "gsk_"
+
+GEMINI_AUTH_HINT = (
+    "check GEMINI_API_KEY in .env: it must be an AI Studio key starting "
+    "'AIza' (https://aistudio.google.com/apikey), and the Generative "
+    "Language API must be enabled for that project"
+)
+GROQ_AUTH_HINT = (
+    "check GROQ_API_KEY in .env: it must be a key starting 'gsk_' "
+    "(https://console.groq.com/keys)"
+)
+
+#: How many available model ids to name when the configured one is gone.
+MODEL_SUGGESTION_COUNT = 4
+
+
+def model_hint(env_var: str, model: str, available: list[str]) -> str:
+    """Compose an actionable hint for a model this account cannot use.
+
+    Providers retire model ids regularly, which surfaces as a 404 on the
+    first real call. Naming the ids that *do* work turns a dead end into a
+    one-line edit.
+    """
+    suggestions = ", ".join(sorted(available)[:MODEL_SUGGESTION_COUNT])
+    return (
+        f"set {env_var} in .env to a model this account can use "
+        f"('{model}' is not available)"
+        + (f"; try one of: {suggestions}" if suggestions else "")
+    )
+
+
+def redact(text: str, secret: str) -> str:
+    """Remove any occurrence of an API key from provider output.
+
+    Provider error bodies are echoed into logs and into ``AIStatus``, so a
+    key that appears in one must never survive the trip.
+    """
+    if secret and secret in text:
+        return text.replace(secret, "***")
+    return text
 
 
 SYSTEM_PROMPT = """You are the TradeLab room assistant.
@@ -71,10 +118,63 @@ class LLMProvider(ABC):
     source: AISource
     model: str
 
+    #: Key prefix and env var names, used for early warnings and hints.
+    key_prefix: str = ""
+    key_env_var: str = ""
+    model_env_var: str = ""
+    auth_hint: str = ""
+
+    _api_key: str
+
     @property
     @abstractmethod
     def configured(self) -> bool:
         """Return True when an API key is present."""
+
+    @property
+    def key_looks_valid(self) -> bool:
+        """Return True when the key carries this provider's expected prefix.
+
+        A cheap shape check only. A key can pass this and still be revoked,
+        so the provider's own response remains the authority.
+        """
+        return bool(self._api_key) and self._api_key.startswith(self.key_prefix)
+
+    def _raise_for_status(self, response: httpx.Response) -> None:
+        """Convert an error response into the narrowest exception available.
+
+        Auth failures become :class:`AIAuthError` carrying a one-line fix,
+        so callers can log an instruction instead of a raw JSON blob.
+        """
+        if response.status_code < 400:
+            return
+        name = self.source.value.capitalize()
+        if response.status_code in AUTH_STATUSES:
+            raise AIAuthError(name, response.status_code, self.auth_hint)
+        body = redact(response.text[:300], self._api_key)
+        raise AIProviderError(f"{name} HTTP {response.status_code}: {body}")
+
+    def _check_model_available(self, available: list[str]) -> None:
+        """Confirm the configured model is one this account can actually use.
+
+        A retired model id fails only on the first real call, long after
+        startup said the key was fine, so it is checked here too.
+        """
+        if available and self.model not in available:
+            raise AIProviderError(
+                f"{self.source.value}: "
+                + model_hint(self.model_env_var, self.model, available),
+            )
+
+    @abstractmethod
+    async def validate(self, timeout: float) -> None:
+        """Make one cheap, token-free call to prove the key and model work.
+
+        Raises:
+            AIAuthError: The provider rejected the key.
+            AIProviderError: The provider was unreachable, or the configured
+                model is not available to this account.
+        """
 
     @abstractmethod
     async def run(
@@ -115,6 +215,10 @@ class GeminiProvider(LLMProvider):
     """Google Gemini via the generativelanguage REST API."""
 
     source = AISource.GEMINI
+    key_prefix = GEMINI_KEY_PREFIX
+    key_env_var = "GEMINI_API_KEY"
+    model_env_var = "GEMINI_MODEL"
+    auth_hint = GEMINI_AUTH_HINT
 
     def __init__(self, api_key: str, model: str) -> None:
         self._api_key = api_key
@@ -124,6 +228,23 @@ class GeminiProvider(LLMProvider):
     def configured(self) -> bool:
         """Return True when a Gemini API key is set."""
         return bool(self._api_key)
+
+    async def validate(self, timeout: float) -> None:
+        """List models — a free call that still exercises the key."""
+        if not self.configured:
+            raise AIProviderError("Gemini API key not configured")
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(
+                f"{GEMINI_BASE_URL}/models",
+                headers={"x-goog-api-key": self._api_key},
+            )
+            self._raise_for_status(response)
+            # Gemini reports ids as "models/gemini-2.0-flash".
+            names = [
+                str(m.get("name", "")).removeprefix("models/")
+                for m in response.json().get("models", [])
+            ]
+            self._check_model_available([n for n in names if n])
 
     async def run(
         self,
@@ -164,10 +285,7 @@ class GeminiProvider(LLMProvider):
                     json=payload,
                     headers={"x-goog-api-key": self._api_key},
                 )
-                if response.status_code >= 400:
-                    raise AIProviderError(
-                        f"Gemini HTTP {response.status_code}: {response.text[:300]}",
-                    )
+                self._raise_for_status(response)
                 body = response.json()
 
                 candidates = body.get("candidates") or []
@@ -232,6 +350,10 @@ class GroqProvider(LLMProvider):
     """Groq via its OpenAI-compatible chat completions endpoint."""
 
     source = AISource.GROQ
+    key_prefix = GROQ_KEY_PREFIX
+    key_env_var = "GROQ_API_KEY"
+    model_env_var = "GROQ_MODEL"
+    auth_hint = GROQ_AUTH_HINT
 
     def __init__(self, api_key: str, model: str) -> None:
         self._api_key = api_key
@@ -241,6 +363,19 @@ class GroqProvider(LLMProvider):
     def configured(self) -> bool:
         """Return True when a Groq API key is set."""
         return bool(self._api_key)
+
+    async def validate(self, timeout: float) -> None:
+        """List models — a free call that still exercises the key."""
+        if not self.configured:
+            raise AIProviderError("Groq API key not configured")
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(
+                "https://api.groq.com/openai/v1/models",
+                headers={"Authorization": f"Bearer {self._api_key}"},
+            )
+            self._raise_for_status(response)
+            ids = [str(m.get("id", "")) for m in response.json().get("data", [])]
+            self._check_model_available([i for i in ids if i])
 
     async def run(
         self,
@@ -280,10 +415,7 @@ class GroqProvider(LLMProvider):
                         "Content-Type": "application/json",
                     },
                 )
-                if response.status_code >= 400:
-                    raise AIProviderError(
-                        f"Groq HTTP {response.status_code}: {response.text[:300]}",
-                    )
+                self._raise_for_status(response)
                 body = response.json()
 
                 choices = body.get("choices") or []

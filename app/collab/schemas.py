@@ -199,6 +199,23 @@ class AIReply(BaseModel):
     error: str | None = None
 
 
+class AIProviderFailure(BaseModel):
+    """The most recent provider failure, safe to show in the UI.
+
+    Carries the provider name and a short reason so a room can surface
+    "Gemini key invalid" instead of a generic failure. Key material is
+    redacted before a failure is ever recorded here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    reason: str
+    hint: str | None = None
+    is_auth_error: bool = False
+    occurred_at: datetime
+
+
 class AIStatus(BaseModel):
     """Reports which providers are usable without exposing key material."""
 
@@ -213,6 +230,7 @@ class AIStatus(BaseModel):
     groq_model: str | None = None
     trigger: str
     read_only: bool = True
+    last_error: AIProviderFailure | None = None
 
 
 # ---------------------------------------------------------------------------

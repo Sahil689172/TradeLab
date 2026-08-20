@@ -32,7 +32,14 @@ def test_settings(tmp_path: Path) -> Settings:
 
     data_root = tmp_path / "backend" / "data"
     metadata_db = data_root / "metadata.db"
+    # Keep a developer's real credentials out of the test run: _env_file=None
+    # ignores .env, and the explicit key overrides beat an exported
+    # GEMINI_API_KEY/GROQ_API_KEY in the ambient environment. Provider tests
+    # opt in via the ai_settings fixture instead.
     settings = Settings(
+        _env_file=None,
+        gemini_api_key=None,
+        groq_api_key=None,
         app_name="TradeLab",
         app_version="0.1.0",
         app_description="TradeLab Quant Engine — Indian Stock Market Analysis Platform",

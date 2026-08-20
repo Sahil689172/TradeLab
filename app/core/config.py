@@ -123,7 +123,7 @@ class Settings(BaseSettings):
     )
     groq_api_key: str | None = Field(default=None, description="Groq API key (fallback provider)")
     groq_model: str = Field(
-        default="llama-3.3-70b-versatile",
+        default="openai/gpt-oss-120b",
         description="Groq model id used for fallback replies",
     )
     ai_trigger: str = Field(
@@ -155,6 +155,24 @@ class Settings(BaseSettings):
         default="console",
         description="Log formatter style",
     )
+
+    @field_validator("gemini_api_key", "groq_api_key", mode="before")
+    @classmethod
+    def clean_api_key(cls, value: object) -> object:
+        """Strip whitespace and wrapping quotes from a pasted API key.
+
+        Copying a key out of a provider dashboard often brings along wrapping
+        quotes or a trailing newline. Providers reject those with an opaque
+        HTTP 400, so they are removed at load time rather than at call time.
+        An empty result collapses to ``None`` so the provider reads as
+        unconfigured instead of sending a blank key.
+        """
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip()
+        while len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+            cleaned = cleaned[1:-1].strip()
+        return cleaned or None
 
     @field_validator("log_level")
     @classmethod

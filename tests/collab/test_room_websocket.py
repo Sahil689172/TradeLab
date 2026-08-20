@@ -50,11 +50,26 @@ class TestWebSocketBasics:
     def test_unknown_room_closes_socket(self, seeded_client) -> None:
         from starlette.websockets import WebSocketDisconnect
 
-        with pytest.raises(WebSocketDisconnect):
+        with pytest.raises(WebSocketDisconnect) as excinfo:
             with seeded_client.websocket_connect(
                 f"{PREFIX}/ws/rooms/missing?user=sahil",
             ) as socket:
                 socket.receive_text()
+        # The handshake has to be accepted before closing, or a browser sees
+        # a bare HTTP 403 and reports 1006 instead of this code.
+        assert excinfo.value.code == 4404
+
+    def test_full_room_closes_with_4409(self, seeded_client) -> None:
+        from starlette.websockets import WebSocketDisconnect
+
+        room_id = _create_room(seeded_client, capacity=1)
+        with seeded_client.websocket_connect(f"{PREFIX}/ws/rooms/{room_id}?user=sahil"):
+            with pytest.raises(WebSocketDisconnect) as excinfo:
+                with seeded_client.websocket_connect(
+                    f"{PREFIX}/ws/rooms/{room_id}?user=intruder",
+                ) as socket:
+                    socket.receive_text()
+        assert excinfo.value.code == 4409
 
     def test_ping_pong(self, seeded_client) -> None:
         room_id = _create_room(seeded_client)

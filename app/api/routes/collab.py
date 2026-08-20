@@ -349,11 +349,14 @@ async def room_socket(
         service = RoomService(session)
         try:
             service.join(room_id, user)
-        except RoomNotFoundError:
-            await websocket.close(code=4404, reason="Room not found")
-            return
-        except RoomFullError as exc:
-            await websocket.close(code=4409, reason=str(exc))
+        except (RoomNotFoundError, RoomFullError) as exc:
+            # Accept first: closing before the handshake completes makes the
+            # server return a bare HTTP 403, and the browser then reports
+            # code 1006 instead of the 4404/4409 the protocol documents.
+            code = 4404 if isinstance(exc, RoomNotFoundError) else 4409
+            reason = "Room not found" if code == 4404 else str(exc)
+            await websocket.accept()
+            await websocket.close(code=code, reason=reason)
             return
         history = service.history(room_id, limit=settings.chat_history_limit)
     finally:

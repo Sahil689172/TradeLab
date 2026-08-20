@@ -19,6 +19,28 @@ from app.middleware.request_logging import RequestLoggingMiddleware
 logger = get_logger(__name__)
 
 
+async def _check_ai_providers(settings: Settings) -> None:
+    """Probe configured LLM providers so a bad key shows up in the boot log.
+
+    Skipped under tests and when the assistant is off. Failures are logged
+    by the agent and never propagate — rooms work fine without an assistant.
+    """
+    if settings.is_test or not (settings.collab_enabled and settings.ai_enabled):
+        return
+    if not settings.is_ai_configured:
+        logger.warning(
+            "AI assistant enabled but no provider key set: "
+            "set GEMINI_API_KEY and/or GROQ_API_KEY in .env",
+        )
+        return
+    try:
+        from app.collab.ai.agent import get_room_ai_agent
+
+        await get_room_ai_agent(settings).validate_providers()
+    except Exception:  # noqa: BLE001 - a provider check must never block startup
+        logger.exception("AI provider validation failed unexpectedly")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application startup and shutdown lifecycle hooks."""
@@ -31,6 +53,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     ensure_storage_directories(settings)
     init_db(settings)
+    await _check_ai_providers(settings)
     logger.info("Application startup complete")
     try:
         yield

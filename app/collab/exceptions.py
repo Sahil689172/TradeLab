@@ -48,6 +48,20 @@ class AIProviderError(CollabError):
         self.attempts = attempts or []
 
 
+class AIAuthError(AIProviderError):
+    """Raised when a provider rejects the API key itself (HTTP 400/401/403).
+
+    Separated from the generic provider error so a bad key can be reported
+    as an actionable configuration problem rather than a transient outage.
+    """
+
+    def __init__(self, provider: str, status: int, hint: str) -> None:
+        super().__init__(f"{provider} rejected the API key (HTTP {status}). {hint}")
+        self.provider = provider
+        self.status = status
+        self.hint = hint
+
+
 class AINotConfiguredError(AIProviderError):
     """Raised when no provider has an API key configured."""
 
