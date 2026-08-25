@@ -40,7 +40,12 @@ class DashboardMonteCarloService:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
 
-    def run(self, symbol: str, request: MonteCarloDashboardRequest) -> MonteCarloDashboardResponse:
+    def _load_trades(
+        self,
+        symbol: str,
+        request: MonteCarloDashboardRequest,
+    ) -> tuple[list[MonteCarloTrade], str, str, list[str]]:
+        """Load trades for streaming or sync run. Returns (trades, source, period, warnings)."""
         base = parquet_basename(symbol).upper()
         strategy = request.strategy.strip().lower()
         if strategy not in STRATEGY_REGISTERARS:
@@ -54,17 +59,11 @@ class DashboardMonteCarloService:
             )
 
         wf_alias = "ema_professional" if strategy in _OOS_STRATEGIES else strategy
-        trades: list[MonteCarloTrade]
-        trade_source: str
-        period = ""
         warnings: list[str] = []
 
         if strategy in _OOS_STRATEGIES:
             trades, trade_source, period, warnings = self._oos_trades(
-                base,
-                wf_alias,
-                storage,
-                request,
+                base, wf_alias, storage, request,
             )
         else:
             trades, meta = load_trades_from_replay(
@@ -82,6 +81,15 @@ class DashboardMonteCarloService:
             ]
             if meta.get("replay_errors"):
                 warnings.append(f"Replay warnings: {meta['replay_errors']}")
+
+        return trades, trade_source, period, warnings
+
+    def run(self, symbol: str, request: MonteCarloDashboardRequest) -> MonteCarloDashboardResponse:
+        trades, trade_source, period, warnings = self._load_trades(symbol, request)
+        base = parquet_basename(symbol).upper()
+        strategy = request.strategy.strip().lower()
+        storage = Path(self._settings.parquet_storage_dir)
+        parquet = storage / f"{base}.parquet"
 
         if not trades:
             return MonteCarloDashboardResponse(

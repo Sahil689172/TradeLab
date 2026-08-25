@@ -5,6 +5,7 @@ import { ChartWorkspace } from '../chart/ChartWorkspace';
 import { StrategyFilterPanel } from '../chart/StrategyFilterPanel';
 import { AnalysisPanel } from '../chart/AnalysisPanel';
 import { MonteCarloPanel } from '../chart/MonteCarloPanel';
+import { MonteCarloPage } from '../../pages/MonteCarloPage';
 import { TradePanel } from '../dashboard/TradePanel';
 import { StockStrategyTable } from '../dashboard/StockStrategyTable';
 import { formatCurrency, formatPct, formatTs, pnlClass } from '../../utils/format';
@@ -30,6 +31,7 @@ export function StockAnalysisWorkspace({
   const [lastRefresh, setLastRefresh] = useState<string | null>(externalRefresh ?? null);
   const [enabledStrategies, setEnabledStrategies] = useState<Set<string>>(new Set());
   const [selectedStrategy, setSelectedStrategy] = useState<string | null>(null);
+  const [mcSimulations, setMcSimulations] = useState<number | null>(null);
 
   const stockQuery = useQuery({
     queryKey: ['stock', symbol],
@@ -85,6 +87,20 @@ export function StockAnalysisWorkspace({
   const expanded = variant === 'full';
   const gridMain = expanded ? 'xl:col-span-9 space-y-4' : 'lg:col-span-9 space-y-4';
   const gridSide = expanded ? 'xl:col-span-3 space-y-4' : 'lg:col-span-3 space-y-4';
+
+  // If a Monte Carlo run is launched, show the full-page workspace instead.
+  if (mcSimulations !== null && selectedStrategy) {
+    return (
+      <MonteCarloPage
+        symbol={symbol}
+        currentPrice={stock?.last_price ?? null}
+        strategy={selectedStrategy}
+        strategyRow={selectedRow}
+        simulations={mcSimulations}
+        onBack={() => setMcSimulations(null)}
+      />
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -160,7 +176,13 @@ export function StockAnalysisWorkspace({
               strategyRow={selectedRow}
             />
           )}
-          <MonteCarloPanel symbol={symbol} strategy={selectedStrategy} currentPrice={stock?.last_price ?? null} />
+          <MonteCarloPanel
+                symbol={symbol}
+                strategy={selectedStrategy}
+                strategyRow={selectedRow}
+                currentPrice={stock?.last_price ?? null}
+                onLaunch={(sims) => setMcSimulations(sims)}
+              />
         </div>
       </div>
     </div>

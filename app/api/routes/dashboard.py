@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from app.api.deps import get_app_settings, get_market_data_gateway
 from app.core.config import Settings
@@ -13,6 +15,12 @@ from app.schemas.responses import SuccessResponse
 from app.services.dashboard.favorites_service import get_favorites_service
 from app.services.dashboard.market_service import get_market_service
 from app.services.dashboard.monte_carlo_service import get_monte_carlo_service
+from app.services.dashboard.monte_carlo_streaming import (
+    cancel_run,
+    get_streaming_service,
+    register_cancel_token,
+    unregister_cancel_token,
+)
 from app.services.dashboard.paper_trading_service import get_paper_book
 from app.services.dashboard.portfolio_service import PortfolioService
 from app.services.dashboard.schemas import (
@@ -184,6 +192,53 @@ def run_monte_carlo(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return SuccessResponse(data=result, message=result.message)
+
+
+@router.post("/stocks/{symbol}/monte-carlo/stream")
+async def stream_monte_carlo(
+    symbol: str,
+    body: MonteCarloDashboardRequest,
+) -> StreamingResponse:
+    """SSE endpoint that streams Monte Carlo progress events.
+
+    Clients consume:
+      event: progress  →  {completed, total, pct, elapsed, status, partial_stats, sample_paths}
+      event: result    →  full MonteCarloDashboardResponse + _sample_paths + _elapsed
+      event: error     →  {message}
+
+    A run_id header is returned so the client can cancel via
+    POST /monte-carlo/{run_id}/cancel.
+    """
+    run_id = str(uuid.uuid4())
+    cancel_event = register_cancel_token(run_id)
+    service = get_streaming_service()
+
+    async def generate():
+        try:
+            async for chunk in service.stream(symbol, body, cancel_event):
+                yield chunk
+        finally:
+            unregister_cancel_token(run_id)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-MC-Run-Id": run_id,
+        },
+    )
+
+
+@router.post("/monte-carlo/{run_id}/cancel")
+def cancel_monte_carlo(run_id: str) -> SuccessResponse[dict]:
+    """Cancel a running Monte Carlo stream by its run_id."""
+    found = cancel_run(run_id)
+    return SuccessResponse(
+        data={"run_id": run_id, "cancelled": found},
+        message="Cancel signal sent" if found else "Run not found (may have completed)",
+    )
 
 
 @router.get("/portfolio", response_model=SuccessResponse[PortfolioResponse])

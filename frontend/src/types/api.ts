@@ -277,6 +277,34 @@ export interface MonteCarloRequest {
   horizons?: number[];
 }
 
+// ── Streaming types ────────────────────────────────────────────────────────
+
+export interface MonteCarloPartialStats {
+  probability_of_loss: number;
+  probability_of_profit: number;
+  median_return_pct: number;
+  return_p05: number;
+  return_p95: number;
+  median_drawdown: number;
+}
+
+export interface MonteCarloProgressEvent {
+  completed: number;
+  total: number;
+  pct: number;
+  elapsed: number;
+  status: 'running' | 'complete';
+  partial_stats: MonteCarloPartialStats;
+  /** Representative equity paths: each is an array of equity values per trade step */
+  sample_paths: number[][];
+}
+
+/** Final result event extends the dashboard response with streaming extras */
+export interface MonteCarloStreamResult extends MonteCarloDashboardResponse {
+  _sample_paths: number[][];
+  _elapsed: number;
+}
+
 export interface MonteCarloDashboardResponse {
   symbol: string;
   strategy: string;

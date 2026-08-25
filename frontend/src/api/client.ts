@@ -128,6 +128,72 @@ export const api = {
     );
   },
 
+  /**
+   * Returns an AbortController you can call .abort() on to cancel,
+   * and a run_id string extracted from the X-MC-Run-Id response header
+   * (available after the first chunk arrives via the header callback).
+   */
+  streamMonteCarlo(
+    symbol: string,
+    body: MonteCarloRequest,
+    onEvent: (event: string, data: unknown) => void,
+    onRunId: (runId: string) => void,
+    signal: AbortSignal,
+  ): Promise<void> {
+    return (async () => {
+      const response = await fetch(`${BASE_URL}/stocks/${encodeURIComponent(symbol)}/monte-carlo/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+        body: JSON.stringify(body),
+        signal,
+      });
+      const runId = response.headers.get('X-MC-Run-Id') ?? '';
+      if (runId) onRunId(runId);
+
+      if (!response.ok || !response.body) {
+        throw new ApiClientError(`Stream failed (${response.status})`, response.status);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+
+        // SSE frames are separated by double newlines.
+        const frames = buf.split('\n\n');
+        buf = frames.pop() ?? '';
+
+        for (const frame of frames) {
+          if (!frame.trim()) continue;
+          let eventName = 'message';
+          let dataLine = '';
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('event: ')) eventName = line.slice(7).trim();
+            else if (line.startsWith('data: ')) dataLine = line.slice(6);
+          }
+          if (dataLine) {
+            try {
+              onEvent(eventName, JSON.parse(dataLine));
+            } catch {
+              // ignore malformed frames
+            }
+          }
+        }
+      }
+    })();
+  },
+
+  cancelMonteCarlo(runId: string) {
+    return request<{ run_id: string; cancelled: boolean }>(
+      `/monte-carlo/${encodeURIComponent(runId)}/cancel`,
+      { method: 'POST' },
+    );
+  },
+
   listFavorites() {
     return request<FavoritesResponse>('/favorites');
   },
