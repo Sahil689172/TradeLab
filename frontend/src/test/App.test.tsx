@@ -313,7 +313,8 @@ describe('Stock detail', () => {
     expect(await screen.findByText(/showing latest 20\+ days/i)).toBeInTheDocument();
     expect(screen.getByText('12 strategies')).toBeInTheDocument();
     expect(screen.getAllByText('ema_trend').length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: /run monte carlo simulation/i })).toBeInTheDocument();
+    // Monte Carlo panel now shows launcher buttons instead of a single run button.
+    expect(screen.getByRole('button', { name: /run 1,000/i })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /load more history/i }));
     await waitFor(() => expect(vi.mocked(api.getOHLCV).mock.calls.length).toBeGreaterThanOrEqual(2));
