@@ -7,10 +7,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // ws:true carries the room socket through; port 8000 is blocked by
-      // Windows (WinError 10013), so the backend runs on 8080.
+      // ws:true carries the room socket through.
       '/api': {
-        target: 'http://127.0.0.1:8080',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         ws: true,
       },
