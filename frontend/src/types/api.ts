@@ -288,20 +288,43 @@ export interface MonteCarloPartialStats {
   median_drawdown: number;
 }
 
+/**
+ * Percentile fan across simulations, one value per equity step.
+ *
+ * Computed server-side over the whole run, so these are the statistically
+ * meaningful curves — far more representative than percentiles derived in the
+ * browser from the handful of illustrative `sample_paths`.
+ */
+export interface MonteCarloBands {
+  steps: number[];
+  /** How many simulated paths backed the percentile computation */
+  paths_used: number;
+  p10: number[];
+  p25: number[];
+  p50: number[];
+  p75: number[];
+  p90: number[];
+}
+
 export interface MonteCarloProgressEvent {
   completed: number;
   total: number;
   pct: number;
   elapsed: number;
+  /** Backend-measured remaining time from observed throughput; null until known */
+  eta_seconds: number | null;
   status: 'running' | 'complete';
   partial_stats: MonteCarloPartialStats;
-  /** Representative equity paths: each is an array of equity values per trade step */
+  /** Percentile fan — the primary chart payload */
+  bands?: MonteCarloBands | Record<string, never>;
+  /** A small bounded set of illustrative equity paths (not the full run) */
   sample_paths: number[][];
 }
 
 /** Final result event extends the dashboard response with streaming extras */
 export interface MonteCarloStreamResult extends MonteCarloDashboardResponse {
   _sample_paths: number[][];
+  _bands?: MonteCarloBands | Record<string, never>;
   _elapsed: number;
 }
 

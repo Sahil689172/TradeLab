@@ -13,3 +13,10 @@ pyarrow>=18.0.0,<20.0.0
 yfinance>=0.2.54,<1.0.0
 matplotlib>=3.8.0,<4.0.0
 numpy>=1.26.0,<3.0.0
+
+# Test dependencies. pytest-asyncio is REQUIRED: pytest.ini sets
+# asyncio_mode=auto, and without this plugin every async test (including the
+# whole Monte Carlo streaming suite) is silently skipped as "async def
+# functions are not natively supported" rather than actually running.
+pytest>=8.0.0,<9.0.0
+pytest-asyncio>=0.24.0,<2.0.0

@@ -16,12 +16,21 @@
 import { useCallback, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type {
+  MonteCarloBands,
   MonteCarloDashboardResponse,
   MonteCarloPartialStats,
   MonteCarloProgressEvent,
   MonteCarloRequest,
   MonteCarloStreamResult,
 } from '../types/api';
+
+/** The backend sends `{}` for bands until at least one batch has completed. */
+function asBands(value: unknown): MonteCarloBands | null {
+  const candidate = value as MonteCarloBands | undefined;
+  return candidate && Array.isArray(candidate.p50) && candidate.p50.length > 0
+    ? candidate
+    : null;
+}
 
 export type MCStreamStatus = 'idle' | 'loading' | 'running' | 'complete' | 'cancelled' | 'error';
 
@@ -35,9 +44,13 @@ export interface MCStreamState {
   pct: number;
   /** Seconds elapsed */
   elapsed: number;
+  /** Backend-estimated seconds remaining; null until throughput is known */
+  etaSeconds: number | null;
   /** Partial statistics updated each batch */
   partialStats: MonteCarloPartialStats | null;
-  /** Representative equity path arrays for chart rendering */
+  /** Percentile fan over the whole run — the primary chart input */
+  bands: MonteCarloBands | null;
+  /** A small bounded set of illustrative equity paths (not the full run) */
   samplePaths: number[][];
   /** Final complete result (populated on status === 'complete') */
   result: MonteCarloDashboardResponse | null;
@@ -51,7 +64,9 @@ const INITIAL_STATE: MCStreamState = {
   total: 0,
   pct: 0,
   elapsed: 0,
+  etaSeconds: null,
   partialStats: null,
+  bands: null,
   samplePaths: [],
   result: null,
   error: null,
@@ -89,8 +104,11 @@ export function useMonteCarloStream() {
             total: ev.total,
             pct: ev.pct,
             elapsed: ev.elapsed,
+            etaSeconds: ev.eta_seconds ?? prev.etaSeconds,
             partialStats: ev.partial_stats ?? prev.partialStats,
-            // Replace sample paths every update so the chart grows.
+            bands: asBands(ev.bands) ?? prev.bands,
+            // Sample paths stop growing once the bounded set is filled, so this
+            // keeps whatever the backend last sent rather than accumulating.
             samplePaths: ev.sample_paths?.length ? ev.sample_paths : prev.samplePaths,
           }));
         } else if (eventName === 'result') {
@@ -99,6 +117,8 @@ export function useMonteCarloStream() {
             ...prev,
             status: 'complete',
             pct: 100,
+            etaSeconds: 0,
+            bands: asBands(res._bands) ?? prev.bands,
             samplePaths: res._sample_paths?.length ? res._sample_paths : prev.samplePaths,
             elapsed: res._elapsed ?? prev.elapsed,
             result: res,

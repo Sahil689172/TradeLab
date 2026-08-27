@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, overload
 
+import numpy as np
 import pandas as pd
 
 from app.core.logging import get_logger
@@ -23,6 +24,28 @@ from app.market_data.utils.symbols import parquet_basename
 logger = get_logger(__name__)
 
 ENGINE_VERSION = "1.0.0"
+
+# Shared point memo: (column, first-date, first-value) -> (dates, values, points).
+#
+# Strategies construct a fresh IndicatorAdapter per evaluated bar (see e.g.
+# EMATrendStrategy._snapshot), and a replay re-binds a frame that grows by one
+# row per bar.  Rebuilding every earlier IndicatorPoint on each bar made
+# indicator access quadratic in bar count and dominated replay runtime, so the
+# memo has to outlive the adapter instance to be reachable at all.
+#
+# Every hit is verified by comparing the cached date AND value prefixes against
+# the incoming frame, so a coincidental key collision (NSE symbols all share a
+# trading calendar) degrades to a rebuild rather than returning wrong data.
+_POINTS_MEMO: dict[
+    tuple[str, int, float],
+    tuple[np.ndarray, np.ndarray, list[IndicatorPoint]],
+] = {}
+_POINTS_MEMO_MAX = 256
+
+
+def clear_points_memo() -> None:
+    """Drop the shared indicator-point memo (used by tests and cache resets)."""
+    _POINTS_MEMO.clear()
 
 
 class IndicatorAdapter:
@@ -95,6 +118,7 @@ class IndicatorAdapter:
     def clear_cache(self) -> None:
         """Clear frame and indicator object caches."""
         self._cache.clear()
+        clear_points_memo()
 
     @overload
     def indicator(self, name: Literal["macd"]) -> MacdIndicator: ...
@@ -152,14 +176,103 @@ class IndicatorAdapter:
         request: str,
         column: str,
     ) -> IndicatorSeries:
-        points = [
-            IndicatorPoint(
-                timestamp=_as_datetime(timestamp),
-                value=None if pd.isna(value) else float(value),
+        """Build the typed series for ``column``.
+
+        Hot path: a replay re-binds a date-capped frame on every bar, so this
+        runs once per bar per indicator over the whole capped frame.  Building
+        it row-by-row through full Pydantic validation dominated replay runtime
+        (~66% of a walk-forward window), so both axes are handled in bulk:
+
+        - timestamps/values are converted with one vectorized pandas/NumPy call
+          each instead of one ``pd.Timestamp(...)`` per row;
+        - points are built with ``model_construct``, which skips per-point
+          schema validation.  The inputs are already exactly typed here
+          (``datetime`` and ``float | None``), so validation had nothing left
+          to check -- it was pure overhead.
+
+        Field semantics are unchanged; only the cost of producing them is.
+
+        The frame a replay binds grows by one row per bar, so rebuilding every
+        earlier point each time made this quadratic in bar count.  The memo
+        below keeps the canonical point list per column and only builds rows
+        that are genuinely new.  Reusing a prefix is sound because the frame is
+        the same underlying series capped at a later date -- earlier rows are
+        byte-identical -- and it never materializes a point past the cap, so
+        the walk-forward date-capping guarantees are untouched.
+        """
+        dates = frame["date"]
+        if not pd.api.types.is_datetime64_any_dtype(dates):
+            dates = pd.to_datetime(dates)
+        raw = frame[column].to_numpy(dtype="float64", copy=False)
+        n_rows = len(raw)
+
+        tz_aware = getattr(dates.dt, "tz", None) is not None
+        date_key = None if tz_aware else dates.to_numpy(dtype="datetime64[ns]")
+
+        memo_key: tuple[str, int, float] | None = None
+        if date_key is not None and n_rows > 0:
+            first_value = float(raw[0])
+            memo_key = (
+                column,
+                int(date_key[0].astype("int64")),
+                first_value if first_value == first_value else float("inf"),
             )
-            for timestamp, value in zip(frame["date"], frame[column], strict=True)
-        ]
-        return IndicatorSeries(name=request, column=column, points=points)
+
+        start = 0
+        canonical: list[IndicatorPoint] = []
+        memo = _POINTS_MEMO.get(memo_key) if memo_key is not None else None
+        if memo is not None:
+            cached_dates, cached_values, cached_points = memo
+            reuse = min(len(cached_points), n_rows)
+            # Dates alone are not a safe identity: every NSE symbol shares the
+            # same trading calendar, so a different symbol's frame would match
+            # on dates while carrying different values.  Compare the values too
+            # (a vectorized compare, far cheaper than rebuilding the points).
+            if (
+                reuse > 0
+                and np.array_equal(cached_dates[:reuse], date_key[:reuse])
+                and np.array_equal(cached_values[:reuse], raw[:reuse], equal_nan=True)
+            ):
+                canonical = cached_points
+                start = reuse
+
+        if start < n_rows:
+            if tz_aware:
+                new_timestamps: object = [_as_datetime(value) for value in dates[start:]]
+            else:
+                # datetime64[us] -> object yields real ``datetime`` objects in
+                # bulk, without the .dt.to_pydatetime deprecation.
+                new_timestamps = (
+                    dates.to_numpy(dtype="datetime64[us]")[start:].astype(object)
+                )
+            new_values = raw[start:]
+            new_missing = pd.isna(new_values)
+            construct = IndicatorPoint.model_construct
+            fresh = [
+                construct(timestamp=timestamp, value=None if is_na else float(value))
+                for timestamp, value, is_na in zip(
+                    new_timestamps, new_values, new_missing, strict=True,
+                )
+            ]
+            if start == 0:
+                canonical = fresh
+            else:
+                canonical = canonical + fresh
+            if memo_key is not None:
+                size = len(canonical)
+                if len(_POINTS_MEMO) >= _POINTS_MEMO_MAX and memo_key not in _POINTS_MEMO:
+                    _POINTS_MEMO.pop(next(iter(_POINTS_MEMO)), None)
+                _POINTS_MEMO[memo_key] = (
+                    date_key[:size], raw[:size].copy(), canonical,
+                )
+
+        # Hand out a prefix matching this frame; never expose rows past the cap.
+        points = canonical if len(canonical) == n_rows else canonical[:n_rows]
+        return IndicatorSeries.model_construct(
+            name=request.strip().lower(),
+            column=column.strip().lower(),
+            points=points,
+        )
 
     def _require_features(self) -> pd.DataFrame:
         if self._features is None:

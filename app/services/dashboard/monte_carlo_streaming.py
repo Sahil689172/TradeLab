@@ -67,8 +67,24 @@ from app.services.dashboard.schemas import (
     PercentileBand,
 )
 
-# How many representative equity paths to send to the browser per batch.
-SAMPLE_PATH_COUNT = 150
+# How many representative equity paths to send to the browser.
+#
+# These are illustrative only -- the chart's real content is the percentile fan
+# below.  Rendering thousands of individual polylines is what made the old view
+# unusable, so this stays small and, once filled, stops growing: every progress
+# event then carries a constant-size payload instead of re-sending an
+# ever-larger list.
+SAMPLE_PATH_COUNT = 40
+
+# Percentile fan levels sent to the browser for the equity-band chart.
+BAND_LEVELS = (10, 25, 50, 75, 90)
+
+# Upper bound on equity cells (paths x steps) retained for computing the fan.
+# Scalar statistics (returns, drawdowns, probabilities) are always exact over
+# every simulation; only the *drawn* band is derived from a bounded, uniformly
+# drawn subset, which keeps memory flat for 100k-simulation runs.
+_BAND_CELL_BUDGET = 4_000_000
+
 # Batch size for streaming progress updates (sims processed per yield).
 # Smaller = more responsive UI but more CPU overhead.  For 100k sims,
 # 5 000 gives 20 updates; for 1 000 sims, minimum clamp gives 5 updates.
@@ -82,6 +98,40 @@ def _batch_size(total: int) -> int:
 
 def _sse(event: str, data: object) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _equity_matrix(
+    paths: np.ndarray,
+    initial_capital: float,
+    capital_mode: CapitalMode,
+) -> np.ndarray:
+    """Equity curves for a batch of resampled trade sequences."""
+    if capital_mode is CapitalMode.ADDITIVE_PNL:
+        equity = initial_capital + np.cumsum(paths, axis=1)
+    else:
+        equity = initial_capital * np.cumprod(np.maximum(1.0 + paths, 0.0), axis=1)
+    start = np.full((equity.shape[0], 1), float(initial_capital))
+    return np.concatenate([start, equity], axis=1)
+
+
+def _percentile_bands(equity: np.ndarray) -> dict:
+    """Percentile fan across simulations, one value per step.
+
+    Returns a compact payload (len(BAND_LEVELS) arrays of n_steps floats)
+    instead of the full path set, so the browser draws a handful of polygons
+    rather than one polyline per simulation.
+    """
+    if equity.size == 0:
+        return {}
+    levels = np.percentile(equity, BAND_LEVELS, axis=0)
+    return {
+        "steps": list(range(equity.shape[1])),
+        "paths_used": int(equity.shape[0]),
+        **{
+            f"p{level}": [round(float(v), 2) for v in levels[i]]
+            for i, level in enumerate(BAND_LEVELS)
+        },
+    }
 
 
 def _partial_stats(
@@ -236,6 +286,12 @@ class MonteCarloStreamingService:
         paths_per_batch = max(1, SAMPLE_PATH_COUNT // max(1, (n_total // batch_sz)))
         sample_paths_acc: list[list[float]] = []
 
+        # Bounded reservoir of equity curves backing the percentile fan.
+        n_steps = n_trades + 1
+        band_capacity = max(1, min(n_total, _BAND_CELL_BUDGET // max(1, n_steps)))
+        band_reservoir = np.empty((band_capacity, n_steps), dtype=np.float64)
+        band_filled = 0
+
         completed = 0
         while completed < n_total:
             if cancel_event.is_set():
@@ -243,17 +299,25 @@ class MonteCarloStreamingService:
                 return
 
             this_batch = min(batch_sz, n_total - completed)
-            # Build index matrix for this batch only.
-            idx = _sample_index_matrix(
-                rng, n_trades, this_batch, config.sampling_method,
-                block_size=config.block_size,
-            )
-            batch_paths = values[idx]  # (this_batch, n_trades)
-            batch = simulate_equity_batch(
-                batch_paths,
-                initial_capital=config.initial_capital,
-                capital_mode=capital_mode,
-            )
+
+            # The simulation itself is pure CPU work.  Running it inline on the
+            # event loop stalled every other request for the duration of the
+            # batch (`await asyncio.sleep(0)` between batches only yields once
+            # the batch has already finished), so it goes to a worker thread --
+            # NumPy releases the GIL for these bulk operations.
+            def _run_batch(size: int = this_batch) -> tuple[np.ndarray, dict]:
+                idx = _sample_index_matrix(
+                    rng, n_trades, size, config.sampling_method,
+                    block_size=config.block_size,
+                )
+                batch_paths = values[idx]  # (size, n_trades)
+                return batch_paths, simulate_equity_batch(
+                    batch_paths,
+                    initial_capital=config.initial_capital,
+                    capital_mode=capital_mode,
+                )
+
+            batch_paths, batch = await asyncio.to_thread(_run_batch)
 
             sl = slice(completed, completed + this_batch)
             all_final[sl] = batch["final"]
@@ -269,22 +333,34 @@ class MonteCarloStreamingService:
             all_vol[sl] = batch["vol"]
             all_sharpe[sl] = batch["sharpe"]
 
-            # Collect sample equity paths from this batch.
+            # Equity curves for this batch, used for both the fan reservoir and
+            # the small illustrative sample.
+            batch_equity = _equity_matrix(
+                batch_paths, config.initial_capital, capital_mode,
+            )
+
+            # Fill the bounded reservoir backing the percentile fan.
+            if band_filled < band_capacity:
+                take = min(band_capacity - band_filled, batch_equity.shape[0])
+                band_reservoir[band_filled:band_filled + take] = batch_equity[:take]
+                band_filled += take
+
+            # Collect sample equity paths until full, then stop growing so the
+            # per-event payload stays constant instead of compounding.
             to_take = min(paths_per_batch, this_batch)
             if to_take > 0 and len(sample_paths_acc) < SAMPLE_PATH_COUNT:
-                for i in range(to_take):
-                    if len(sample_paths_acc) >= SAMPLE_PATH_COUNT:
-                        break
-                    if capital_mode is CapitalMode.ADDITIVE_PNL:
-                        eq = config.initial_capital + np.cumsum(batch_paths[i])
-                    else:
-                        growth = np.cumprod(np.maximum(1.0 + batch_paths[i], 0.0))
-                        eq = config.initial_capital * growth
-                    sample_paths_acc.append([round(float(v), 2) for v in eq])
+                room = SAMPLE_PATH_COUNT - len(sample_paths_acc)
+                # Column 0 is the seeded initial capital, which the fan needs as
+                # a common origin but sample paths have never included.
+                for row in batch_equity[:min(to_take, room), 1:]:
+                    sample_paths_acc.append([round(float(v), 2) for v in row])
 
             completed += this_batch
             elapsed = round(time.monotonic() - started, 2)
             pct = round(completed / n_total * 100, 1)
+            # Real remaining-time estimate from observed throughput so far.
+            rate = completed / elapsed if elapsed > 0 else 0.0
+            eta = round((n_total - completed) / rate, 2) if rate > 0 else None
 
             partial = _partial_stats(
                 all_ret[:completed], all_dd_abs[:completed], config.initial_capital
@@ -294,10 +370,12 @@ class MonteCarloStreamingService:
                 "total": n_total,
                 "pct": pct,
                 "elapsed": elapsed,
+                "eta_seconds": eta,
                 "status": "running",
                 "partial_stats": partial,
-                # Stream accumulated sample paths on every update so the chart
-                # grows progressively.
+                # Primary visualization: a handful of percentile curves rather
+                # than one polyline per simulation.
+                "bands": _percentile_bands(band_reservoir[:band_filled]),
                 "sample_paths": sample_paths_acc,
             }
             yield _sse("progress", progress_payload)
@@ -345,20 +423,24 @@ class MonteCarloStreamingService:
             return
 
         elapsed_total = round(time.monotonic() - started, 2)
+        final_bands = _percentile_bands(band_reservoir[:band_filled])
         # Final progress event (100%).
         yield _sse("progress", {
             "completed": n_total,
             "total": n_total,
             "pct": 100.0,
             "elapsed": elapsed_total,
+            "eta_seconds": 0.0,
             "status": "complete",
             "partial_stats": _partial_stats(all_ret, all_dd_abs, config.initial_capital),
+            "bands": final_bands,
             "sample_paths": sample_paths_acc,
         })
         await asyncio.sleep(0)
 
         payload = final_response.model_dump(mode="json")
         payload["_sample_paths"] = sample_paths_acc
+        payload["_bands"] = final_bands
         payload["_elapsed"] = elapsed_total
         yield _sse("result", payload)
 
@@ -472,11 +554,13 @@ class MonteCarloStreamingService:
         base = parquet_basename(symbol).upper()
         parquet = Path(settings.parquet_storage_dir) / f"{base}.parquet"
         current_price = 0.0
+        daily_return_count = 0
         horizon_rows: list[HorizonOutlook] = []
         if parquet.exists():
             try:
                 frame = pd.read_parquet(parquet)
                 daily_returns = daily_returns_from_frame(frame)
+                daily_return_count = len(daily_returns)
                 closes = frame.sort_values("date")["close"].astype(float)
                 current_price = float(closes.iloc[-1]) if not closes.empty else 0.0
                 horizons = sorted({int(h) for h in request.horizons if int(h) > 0}) or [1, 2, 5]
@@ -540,7 +624,7 @@ class MonteCarloStreamingService:
             timeframe=request.timeframe,
             next_day_outlook=outlook,
             current_price=current_price if current_price > 0 else None,
-            historical_daily_return_count=0,
+            historical_daily_return_count=daily_return_count,
             horizon_outlook=horizon_rows,
             warnings=warnings,
             resampling_limitation=RESAMPLING_LIMITATION,

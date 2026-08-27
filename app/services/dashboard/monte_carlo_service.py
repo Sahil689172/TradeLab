@@ -20,6 +20,7 @@ from app.backtesting.walk_forward import WalkForwardConfig, WalkForwardEngine
 from app.core.config import Settings, get_settings
 from app.market_data.utils.symbols import parquet_basename
 from app.services.dashboard.horizon_outlook import compute_horizon_bands, daily_returns_from_frame
+from app.services.dashboard.oos_trade_cache import OOSTradeCache, cache_key
 from app.services.dashboard.schemas import (
     HorizonOutlook,
     MonteCarloDashboardRequest,
@@ -32,6 +33,24 @@ from app.services.trade_recommendation.strategy_validation import STRATEGY_REGIS
 _OOS_STRATEGIES = frozenset({"ema_trend", "ema_professional", "ema_trend_professional", "ema"})
 # Horizon bands use bootstrap on daily returns; cap keeps large MC requests responsive.
 _HORIZON_BOOTSTRAP_CAP = 2_000
+
+# Walk-forward settings used to produce the dashboard's out-of-sample trades.
+#
+# This deliberately uses the YEAR-based windowing rather than the day-based one.
+# generate_windows()'s day path measures spans in CALENDAR days, so the previous
+# dashboard setting of train_days=60 asked for ~41 trading bars -- below the EMA
+# strategy's own min_history_bars=60.  Every training window was therefore
+# structurally unable to evaluate the strategy, and the run still paid for 180
+# windows over a 10-year history.
+#
+# train=2y (~504 bars) clears the warmup requirement with a wide margin while
+# still leaving several independent test windows, and test/step=1y keeps the
+# windows non-overlapping.  Train/test isolation and the leakage report are
+# unchanged -- this only sizes the windows sanely.
+_WF_TRAIN_YEARS = 2
+_WF_TEST_YEARS = 1
+_WF_STEP_YEARS = 1
+_WF_FINGERPRINT = f"wf:y{_WF_TRAIN_YEARS}:{_WF_TEST_YEARS}:{_WF_STEP_YEARS}"
 
 
 class DashboardMonteCarloService:
@@ -193,6 +212,9 @@ class DashboardMonteCarloService:
         current_price = float(closes.iloc[-1]) if not closes.empty else 0.0
         return current_price, daily_returns, horizons
 
+    def _oos_cache(self) -> OOSTradeCache:
+        return OOSTradeCache(Path(self._settings.data_root) / "monte_carlo" / "oos_cache")
+
     def _oos_trades(
         self,
         symbol: str,
@@ -200,12 +222,40 @@ class DashboardMonteCarloService:
         storage: Path,
         request: MonteCarloDashboardRequest,
     ) -> tuple[list[MonteCarloTrade], str, str, list[str]]:
+        """Return completed walk-forward OOS trades, memoized on disk.
+
+        The trade set depends only on the symbol, the strategy, the walk-forward
+        settings and the underlying bars -- never on ``simulations`` or
+        ``initial_capital`` scaling of the request -- so repeat Monte Carlo runs
+        reuse it instead of re-running a multi-minute walk-forward pass.
+        """
         from app.backtesting.monte_carlo.adapter import trades_from_sources
 
+        parquet = storage / f"{symbol}.parquet"
+        cache = self._oos_cache()
+        key = cache_key(
+            symbol=symbol,
+            strategy_alias=wf_alias,
+            # initial_capital scales trade P&L, so it belongs in the identity.
+            config_fingerprint=f"{_WF_FINGERPRINT}:cap{request.initial_capital:g}",
+            parquet=parquet,
+        )
+
+        cached = cache.get(key)
+        if cached is not None:
+            return (
+                list(cached.trades),
+                "OUT-OF-SAMPLE MONTE CARLO",
+                cached.period,
+                self._oos_warnings(
+                    cached.trade_count, cached.window_count, from_cache=True,
+                ),
+            )
+
         config = WalkForwardConfig(
-            train_days=60,
-            test_days=20,
-            step_days=20,
+            train_years=_WF_TRAIN_YEARS,
+            test_years=_WF_TEST_YEARS,
+            step_years=_WF_STEP_YEARS,
             initial_capital=request.initial_capital,
             strategy_alias=wf_alias,
             include_monte_carlo=False,
@@ -240,14 +290,41 @@ class DashboardMonteCarloService:
             start = min(t.entry_timestamp for t in oos).date()
             end = max(t.exit_timestamp for t in oos).date()
             period = f"{start.isoformat()} → {end.isoformat()}"
+        trades = trades_from_sources(oos)
+        cache.put(
+            key,
+            trades=trades,
+            period=period,
+            window_count=len(wf.windows),
+            strategy_alias=wf_alias,
+        )
+        return (
+            trades,
+            "OUT-OF-SAMPLE MONTE CARLO",
+            period,
+            self._oos_warnings(len(oos), len(wf.windows), from_cache=False),
+        )
+
+    @staticmethod
+    def _oos_warnings(
+        trade_count: int,
+        window_count: int,
+        *,
+        from_cache: bool,
+    ) -> list[str]:
         warnings = [
             "OUT-OF-SAMPLE MONTE CARLO: trades are walk-forward test-window completions only.",
-            f"historical_oos_trades={len(oos)} from {len(wf.windows)} window(s).",
+            f"historical_oos_trades={trade_count} from {window_count} window(s).",
             RESAMPLING_LIMITATION,
         ]
-        if len(oos) <= 4:
+        if from_cache:
+            warnings.append(
+                "OOS trades served from cache (invalidated automatically when "
+                "this symbol's OHLCV data changes).",
+            )
+        if trade_count <= 4:
             warnings.append("INSUFFICIENT_EVIDENCE: OOS trade count is very small.")
-        return trades_from_sources(oos), "OUT-OF-SAMPLE MONTE CARLO", period, warnings
+        return warnings
 
     def _next_day_outlook(
         self,

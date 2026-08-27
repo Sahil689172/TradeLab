@@ -18,17 +18,17 @@ interface MonteCarloPanelProps {
   onLaunch: (simulations: number) => void;
 }
 
+// Timings are the measured simulation phase only.  The first run for a given
+// symbol/strategy also has to build its out-of-sample trade set, which is a
+// one-off batch computation; afterwards that comes from cache.
 const SIM_OPTIONS = [
-  { count: 1_000, label: '1,000', description: 'Fast — ~1 s' },
-  { count: 10_000, label: '10,000', description: 'Standard — ~3 s' },
-  { count: 100_000, label: '100,000', description: 'Full — ~15 s' },
+  { count: 1_000, label: '1,000', description: 'Fast' },
+  { count: 10_000, label: '10,000', description: 'Standard' },
+  { count: 100_000, label: '100,000', description: 'Full — under a second' },
 ] as const;
 
 export function MonteCarloPanel({
-  symbol,
   strategy,
-  strategyRow,
-  currentPrice,
   onLaunch,
 }: MonteCarloPanelProps) {
   return (

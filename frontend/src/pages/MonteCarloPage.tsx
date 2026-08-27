@@ -19,9 +19,10 @@
  *   └──────────────────────────────────────────────────────┘
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { StrategySignalRow } from '../types/api';
 import { useMonteCarloStream } from '../hooks/useMonteCarloStream';
+import type { MCChartView } from '../components/chart/MonteCarloPathChart';
 import { MonteCarloPathChart } from '../components/chart/MonteCarloPathChart';
 import { formatCurrency, formatPct } from '../utils/format';
 
@@ -95,7 +96,12 @@ export function MonteCarloPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const { status, completed, total, pct: pctDone, elapsed, partialStats, samplePaths, result, error } = state;
+  const {
+    status, completed, total, pct: pctDone, elapsed, etaSeconds,
+    partialStats, bands, samplePaths, result, error,
+  } = state;
+  const [chartView, setChartView] = useState<MCChartView>('fan');
+  const [showSamplePaths, setShowSamplePaths] = useState(false);
   const isActive = status === 'loading' || status === 'running';
   const isDone = status === 'complete';
   const isFailed = status === 'error' || status === 'cancelled';
@@ -169,7 +175,10 @@ export function MonteCarloPage({
           <span className="font-mono text-slate-400">
             {completed.toLocaleString()} / {total.toLocaleString()} &nbsp;·&nbsp;
             {pctDone.toFixed(1)}% &nbsp;·&nbsp;
-            {elapsed.toFixed(1)}s
+            {elapsed.toFixed(1)}s elapsed
+            {status === 'running' && etaSeconds != null && etaSeconds > 0 && (
+              <> &nbsp;·&nbsp; ~{etaSeconds.toFixed(1)}s remaining</>
+            )}
           </span>
         </div>
         <div className="h-2 overflow-hidden rounded bg-slate-800">
@@ -195,31 +204,69 @@ export function MonteCarloPage({
 
         {/* Live path chart */}
         <div className="panel p-3 xl:col-span-8">
-          <div className="mb-2 flex items-center justify-between">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-semibold text-slate-300">
-              Simulated equity paths
-              {samplePaths.length > 0 && (
+              Monte Carlo simulation output
+              {bands?.paths_used ? (
                 <span className="ml-2 font-normal text-slate-500">
-                  ({samplePaths.length} representative paths shown)
+                  (percentiles across {bands.paths_used.toLocaleString()} paths)
                 </span>
-              )}
+              ) : null}
             </p>
             <p className="text-[10px] uppercase text-terminal-warn">
               Simulated — not future prices
             </p>
           </div>
+
+          {/* View toggles — the fan is the default because rendering every
+              simulated path individually is what made this unusable. */}
+          <div className="mb-2 flex flex-wrap items-center gap-1">
+            {([
+              ['fan', 'Percentile bands'],
+              ['distribution', 'Distribution'],
+              ['drawdown', 'Drawdown'],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setChartView(value)}
+                className={`rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                  chartView === value
+                    ? 'bg-amber-500/20 text-amber-300'
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            {chartView === 'fan' && (
+              <label className="ml-2 flex cursor-pointer items-center gap-1 text-[10px] text-slate-500">
+                <input
+                  type="checkbox"
+                  checked={showSamplePaths}
+                  onChange={(e) => setShowSamplePaths(e.target.checked)}
+                  className="h-3 w-3 accent-amber-500"
+                />
+                Show sample paths ({samplePaths.length})
+              </label>
+            )}
+          </div>
+
           <MonteCarloPathChart
-            paths={samplePaths}
+            bands={bands}
+            samplePaths={samplePaths}
             initialCapital={initialCapital}
             currentPrice={currentPrice}
             height={280}
+            view={chartView}
+            showSamplePaths={showSamplePaths}
           />
-          <div className="mt-2 flex gap-4 text-[10px] text-slate-500">
+          <div className="mt-2 flex flex-wrap gap-4 text-[10px] text-slate-500">
             <span className="flex items-center gap-1">
               <span className="inline-block h-0.5 w-4 bg-amber-400" /> Median path
             </span>
             <span className="flex items-center gap-1">
-              <span className="inline-block h-2 w-4 bg-amber-400/20" /> P10–P90 band
+              <span className="inline-block h-2 w-4 bg-amber-400/20" /> P10–P90 / P25–P75 bands
             </span>
             <span className="flex items-center gap-1">
               <span className="inline-block h-0.5 w-4 border-t border-dashed border-sky-400" /> Reference price
