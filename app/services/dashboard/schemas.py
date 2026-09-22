@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from pydantic import BaseModel, ConfigDict, Field
+# Single source of truth for allowed simulation counts.
+# Both the frontend and backend reference this list; any value outside it is
+# rejected by the backend validator so manual API calls cannot bypass it.
+ALLOWED_SIMULATION_COUNTS: tuple[int, ...] = (10, 100, 500, 1_000)
 
 
 class DashboardSignal(str, Enum):
@@ -339,11 +343,22 @@ class MonteCarloDashboardRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     strategy: str
-    simulations: int = Field(default=1_000, ge=1, le=100_000)
+    simulations: int = Field(default=1_000)
     random_seed: int = Field(default=42)
     initial_capital: float = Field(default=1_000_000.0, gt=0.0)
     timeframe: str = "1D"
     horizons: list[int] = Field(default_factory=lambda: [1, 2, 5])
+
+    @field_validator("simulations")
+    @classmethod
+    def _validate_simulations(cls, v: int) -> int:
+        if v not in ALLOWED_SIMULATION_COUNTS:
+            allowed = ", ".join(str(c) for c in ALLOWED_SIMULATION_COUNTS)
+            raise ValueError(
+                f"simulations must be one of [{allowed}]; got {v}. "
+                "Values like 10,000 and 100,000 are not supported."
+            )
+        return v
 
 
 class MonteCarloDashboardResponse(BaseModel):

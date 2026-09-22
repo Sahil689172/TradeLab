@@ -5,12 +5,22 @@
  * sample paths, and exposes a cancel function.
  *
  * States:
- *   idle        → not started
- *   loading     → waiting for first byte (trade loading phase)
- *   running     → receiving progress events
- *   complete    → result event received
- *   cancelled   → user cancelled
- *   error       → backend error event or network failure
+ *   idle             → not started
+ *   loading_trades   → SSE connection open, backend loading historical trades
+ *   simulating       → trades loaded, simulation batches running
+ *   complete         → result event received
+ *   cancelled        → user cancelled (or backend sent "Cancelled" error)
+ *   error            → backend error event or network failure
+ *
+ * The legacy 'loading' / 'running' aliases are preserved as type aliases so
+ * callers that still pattern-match on them continue to work.
+ *
+ * IMPORTANT — abort vs cancel:
+ *   cancel()      → user-initiated; shows "Cancelled by user" in the UI.
+ *   abortStream() → internal only; silently aborts the fetch without changing
+ *                   the displayed status.  Use this in useEffect cleanup so
+ *                   that React StrictMode's mount→unmount→remount cycle and
+ *                   ordinary component unmounts never show a false cancellation.
  */
 
 import { useCallback, useRef, useState } from 'react';
@@ -21,6 +31,7 @@ import type {
   MonteCarloPartialStats,
   MonteCarloProgressEvent,
   MonteCarloRequest,
+  MonteCarloStartedEvent,
   MonteCarloStreamResult,
 } from '../types/api';
 
@@ -32,7 +43,16 @@ function asBands(value: unknown): MonteCarloBands | null {
     : null;
 }
 
-export type MCStreamStatus = 'idle' | 'loading' | 'running' | 'complete' | 'cancelled' | 'error';
+export type MCStreamStatus =
+  | 'idle'
+  | 'loading_trades'   // SSE open, historical replay running
+  | 'simulating'       // trades loaded, MC batches in flight
+  | 'complete'
+  | 'cancelled'
+  | 'error'
+  // Legacy aliases kept for backward-compat with callers
+  | 'loading'          // = loading_trades
+  | 'running';         // = simulating
 
 export interface MCStreamState {
   status: MCStreamStatus;
@@ -46,6 +66,10 @@ export interface MCStreamState {
   elapsed: number;
   /** Backend-estimated seconds remaining; null until throughput is known */
   etaSeconds: number | null;
+  /** Human-readable status message from the backend */
+  statusMessage: string;
+  /** Number of historical trades loaded (available after loading_trades phase) */
+  tradeCount: number | null;
   /** Partial statistics updated each batch */
   partialStats: MonteCarloPartialStats | null;
   /** Percentile fan over the whole run — the primary chart input */
@@ -65,6 +89,8 @@ const INITIAL_STATE: MCStreamState = {
   pct: 0,
   elapsed: 0,
   etaSeconds: null,
+  statusMessage: '',
+  tradeCount: null,
   partialStats: null,
   bands: null,
   samplePaths: [],
@@ -76,6 +102,9 @@ export function useMonteCarloStream() {
   const [state, setState] = useState<MCStreamState>(INITIAL_STATE);
   const abortRef = useRef<AbortController | null>(null);
   const runIdRef = useRef<string>('');
+  // Set to true ONLY when the user explicitly clicks Cancel.
+  // Never set from effect cleanup / component unmount.
+  const userCancelledRef = useRef(false);
 
   const start = useCallback(
     (symbol: string, request: MonteCarloRequest) => {
@@ -84,22 +113,37 @@ export function useMonteCarloStream() {
         abortRef.current.abort();
       }
 
+      userCancelledRef.current = false;
       const controller = new AbortController();
       abortRef.current = controller;
       runIdRef.current = '';
 
       setState({
         ...INITIAL_STATE,
-        status: 'loading',
+        status: 'loading_trades',
+        statusMessage: 'Connecting to simulation service…',
         total: request.simulations ?? 1_000,
       });
 
       function handleEvent(eventName: string, data: unknown) {
-        if (eventName === 'progress') {
+        if (eventName === 'started') {
+          const ev = data as MonteCarloStartedEvent;
+          const nextStatus: MCStreamStatus =
+            ev.status === 'simulating' ? 'simulating' : 'loading_trades';
+          setState((prev) => ({
+            ...prev,
+            status: nextStatus,
+            statusMessage: ev.message,
+            total: ev.total ?? prev.total,
+            tradeCount: ev.trade_count ?? prev.tradeCount,
+            elapsed: ev.elapsed ?? prev.elapsed,
+          }));
+        } else if (eventName === 'progress') {
           const ev = data as MonteCarloProgressEvent;
           setState((prev) => ({
             ...prev,
-            status: ev.status === 'complete' ? 'running' : 'running',
+            status: 'simulating',
+            statusMessage: `Simulating… ${ev.completed.toLocaleString()} / ${ev.total.toLocaleString()}`,
             completed: ev.completed,
             total: ev.total,
             pct: ev.pct,
@@ -107,8 +151,6 @@ export function useMonteCarloStream() {
             etaSeconds: ev.eta_seconds ?? prev.etaSeconds,
             partialStats: ev.partial_stats ?? prev.partialStats,
             bands: asBands(ev.bands) ?? prev.bands,
-            // Sample paths stop growing once the bounded set is filled, so this
-            // keeps whatever the backend last sent rather than accumulating.
             samplePaths: ev.sample_paths?.length ? ev.sample_paths : prev.samplePaths,
           }));
         } else if (eventName === 'result') {
@@ -116,6 +158,7 @@ export function useMonteCarloStream() {
           setState((prev) => ({
             ...prev,
             status: 'complete',
+            statusMessage: 'Simulation complete',
             pct: 100,
             etaSeconds: 0,
             bands: asBands(res._bands) ?? prev.bands,
@@ -126,9 +169,19 @@ export function useMonteCarloStream() {
         } else if (eventName === 'error') {
           const msg = (data as { message?: string })?.message ?? 'Unknown error';
           if (msg === 'Cancelled') {
-            setState((prev) => ({ ...prev, status: 'cancelled', error: 'Cancelled by user' }));
+            setState((prev) => ({
+              ...prev,
+              status: 'cancelled',
+              statusMessage: 'Cancelled',
+              error: 'Cancelled by user',
+            }));
           } else {
-            setState((prev) => ({ ...prev, status: 'error', error: msg }));
+            setState((prev) => ({
+              ...prev,
+              status: 'error',
+              statusMessage: `Error: ${msg}`,
+              error: msg,
+            }));
           }
         }
       }
@@ -137,21 +190,39 @@ export function useMonteCarloStream() {
         .streamMonteCarlo(symbol, request, handleEvent, (id) => { runIdRef.current = id; }, controller.signal)
         .catch((err: Error) => {
           if (err.name === 'AbortError') {
-            setState((prev) => ({
-              ...prev,
-              status: prev.status === 'cancelled' ? 'cancelled' : 'cancelled',
-              error: 'Cancelled',
-            }));
-          } else {
-            setState((prev) => ({ ...prev, status: 'error', error: err.message }));
+            // AbortError fires on both user-cancel and silent abortStream().
+            // Only transition to 'cancelled' when the user explicitly triggered it.
+            if (userCancelledRef.current) {
+              setState((prev) => ({
+                ...prev,
+                status: 'cancelled',
+                statusMessage: 'Cancelled',
+                error: 'Cancelled by user',
+              }));
+            }
+            // Otherwise (unmount / StrictMode cleanup / abortStream) — leave
+            // the state exactly as-is so the UI does not flash to "Cancelled".
+            return;
           }
+          setState((prev) => ({
+            ...prev,
+            status: 'error',
+            statusMessage: `Connection error: ${err.message}`,
+            error: err.message,
+          }));
         });
     },
     [],
   );
 
   const cancel = useCallback(() => {
-    setState((prev) => ({ ...prev, status: 'cancelled', error: 'Cancelled by user' }));
+    userCancelledRef.current = true;
+    setState((prev) => ({
+      ...prev,
+      status: 'cancelled',
+      statusMessage: 'Cancelled',
+      error: 'Cancelled by user',
+    }));
     if (abortRef.current) {
       abortRef.current.abort();
       abortRef.current = null;
@@ -163,7 +234,27 @@ export function useMonteCarloStream() {
     }
   }, []);
 
+  /**
+   * Silently abort the in-flight fetch WITHOUT marking the run as cancelled.
+   *
+   * Use this in useEffect cleanup / component unmount so React StrictMode's
+   * mount→unmount→remount cycle never shows a false "Cancelled by user".
+   *
+   * DO NOT call cancel() from cleanup — cancel() sets userCancelledRef which
+   * causes the AbortError handler to show "Cancelled by user" on the remount.
+   */
+  const abortStream = useCallback(() => {
+    // userCancelledRef intentionally NOT set here.
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    // No backend cancel signal — the backend will complete or time out on its
+    // own.  The client simply disconnects.
+  }, []);
+
   const reset = useCallback(() => {
+    userCancelledRef.current = false;
     if (abortRef.current) {
       abortRef.current.abort();
       abortRef.current = null;
@@ -171,5 +262,5 @@ export function useMonteCarloStream() {
     setState(INITIAL_STATE);
   }, []);
 
-  return { state, start, cancel, reset };
+  return { state, start, cancel, abortStream, reset };
 }

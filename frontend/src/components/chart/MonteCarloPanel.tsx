@@ -2,13 +2,15 @@
  * MonteCarloPanel
  *
  * Sidebar panel shown inside StockAnalysisWorkspace.
- * Lets the user pick a simulation count (1k / 10k / 100k) and launches
+ * Lets the user pick a simulation count and launches
  * the dedicated MonteCarloPage workspace for live streaming visualization.
  *
- * The panel itself no longer runs simulations inline — it's a launcher.
+ * Allowed counts: 10 / 100 / 500 / 1,000
+ * (Backend enforces the same list via ALLOWED_SIMULATION_COUNTS in schemas.py)
  */
 
 import type { StrategySignalRow } from '../../types/api';
+import { ALLOWED_SIMULATIONS } from '../../types/api';
 
 interface MonteCarloPanelProps {
   symbol: string;
@@ -18,14 +20,13 @@ interface MonteCarloPanelProps {
   onLaunch: (simulations: number) => void;
 }
 
-// Timings are the measured simulation phase only.  The first run for a given
-// symbol/strategy also has to build its out-of-sample trade set, which is a
-// one-off batch computation; afterwards that comes from cache.
-const SIM_OPTIONS = [
-  { count: 1_000, label: '1,000', description: 'Fast' },
-  { count: 10_000, label: '10,000', description: 'Standard' },
-  { count: 100_000, label: '100,000', description: 'Full — under a second' },
-] as const;
+// Descriptions shown next to each count.  Keep in sync with ALLOWED_SIMULATIONS.
+const SIM_DESCRIPTIONS: Record<number, string> = {
+  10:    'Quick test',
+  100:   'Fast',
+  500:   'Standard',
+  1_000: 'Full',
+};
 
 export function MonteCarloPanel({
   strategy,
@@ -39,7 +40,9 @@ export function MonteCarloPanel({
       </div>
       <div className="space-y-3 p-3 text-sm">
         {!strategy && (
-          <p className="text-slate-500 text-xs">Select a strategy to run Monte Carlo on its completed trades.</p>
+          <p className="text-slate-500 text-xs">
+            Select a strategy to run Monte Carlo on its completed trades.
+          </p>
         )}
 
         {strategy && (
@@ -50,15 +53,19 @@ export function MonteCarloPanel({
 
             <div className="space-y-2">
               <p className="text-[10px] uppercase text-slate-500">Choose simulation count</p>
-              {SIM_OPTIONS.map(({ count, label, description }) => (
+              {ALLOWED_SIMULATIONS.map((count) => (
                 <button
                   key={count}
                   type="button"
                   className="w-full rounded border border-terminal-border bg-terminal-bg/60 px-3 py-2 text-left text-xs hover:border-terminal-accent hover:bg-terminal-accent/10 transition-colors"
                   onClick={() => onLaunch(count)}
                 >
-                  <span className="font-mono font-semibold text-slate-200">Run {label}</span>
-                  <span className="ml-2 text-slate-500">{description}</span>
+                  <span className="font-mono font-semibold text-slate-200">
+                    Run {count.toLocaleString()}
+                  </span>
+                  <span className="ml-2 text-slate-500">
+                    {SIM_DESCRIPTIONS[count] ?? ''}
+                  </span>
                 </button>
               ))}
             </div>

@@ -277,7 +277,29 @@ export interface MonteCarloRequest {
   horizons?: number[];
 }
 
+// ── Allowed simulation counts — single source of truth for the frontend.
+//    Must stay in sync with ALLOWED_SIMULATION_COUNTS in
+//    app/services/dashboard/schemas.py
+export const ALLOWED_SIMULATIONS = [10, 100, 500, 1_000] as const;
+export type AllowedSimulations = (typeof ALLOWED_SIMULATIONS)[number];
+
 // ── Streaming types ────────────────────────────────────────────────────────
+
+/**
+ * First event emitted as soon as the SSE connection is accepted.
+ * Fires twice: once before trade loading (status='loading_trades') and
+ * once after trades are ready and simulation is beginning (status='simulating').
+ */
+export interface MonteCarloStartedEvent {
+  symbol: string;
+  strategy: string;
+  total: number;
+  status: 'loading_trades' | 'simulating';
+  message: string;
+  trade_count?: number;
+  trade_source?: string;
+  elapsed?: number;
+}
 
 export interface MonteCarloPartialStats {
   probability_of_loss: number;

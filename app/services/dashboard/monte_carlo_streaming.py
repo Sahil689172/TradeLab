@@ -214,6 +214,20 @@ class MonteCarloStreamingService:
         """Yield SSE text chunks.  Never raises; errors are emitted as events."""
         started = time.monotonic()
 
+        # ── Emit 'started' immediately so the browser transitions out of
+        #    'loading' before the (potentially slow) trade-loading phase.
+        #    Without this the SSE connection is silent for the entire replay
+        #    duration (~60-240s) and the Vite proxy / browser times it out.
+        yield _sse("started", {
+            "symbol": symbol.upper(),
+            "strategy": request.strategy,
+            "total": request.simulations,
+            "status": "loading_trades",
+            "message": "Loading historical trades…",
+        })
+        # Give the event loop a tick so the chunk is flushed to the client.
+        await asyncio.sleep(0)
+
         # ── Phase 1: load trades (blocking, done once) ───────────────────────
         try:
             trades, trade_source, period, extra_warnings = await asyncio.to_thread(
@@ -226,6 +240,20 @@ class MonteCarloStreamingService:
         if cancel_event.is_set():
             yield _sse("error", {"message": "Cancelled"})
             return
+
+        # Inform the browser that trade loading finished and simulation is starting.
+        elapsed_after_load = round(time.monotonic() - started, 2)
+        yield _sse("started", {
+            "symbol": symbol.upper(),
+            "strategy": request.strategy,
+            "total": request.simulations,
+            "status": "simulating",
+            "trade_count": len(trades),
+            "trade_source": trade_source,
+            "elapsed": elapsed_after_load,
+            "message": f"Loaded {len(trades)} trades — starting simulation…",
+        })
+        await asyncio.sleep(0)
 
         n_total = request.simulations
         # ── Phase 2: validate + prepare ──────────────────────────────────────

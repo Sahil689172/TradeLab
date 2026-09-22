@@ -126,7 +126,8 @@ describe('useMonteCarloStream', () => {
     act(() => {
       result.current.start('RELIANCE', { strategy: 'ema_trend', simulations: 1000 });
     });
-    expect(result.current.state.status).toBe('loading');
+    // Hook sets loading_trades immediately; 'loading' is a legacy alias.
+    expect(['loading_trades', 'loading']).toContain(result.current.state.status);
     expect(result.current.state.total).toBe(1000);
   });
 
@@ -312,8 +313,8 @@ describe('SSE frame parsing edge cases', () => {
       result.current.start('TEST', { strategy: 'ema_trend', simulations: 100 });
       await new Promise((r) => setTimeout(r, 50));
     });
-    // Should stay loading (no valid events processed).
-    expect(result.current.state.status).toBe('loading');
+    // Should stay in a loading state (no valid events processed).
+    expect(['loading_trades', 'loading']).toContain(result.current.state.status);
   });
 
   it('handles multiple frames in one chunk', async () => {
