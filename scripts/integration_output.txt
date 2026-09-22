@@ -19,14 +19,14 @@
 ============================================================
   Importing service layer
 ============================================================
-  Imports OK  (906 ms)
+  Imports OK  (1015 ms)
 
 ============================================================
   Running MC via DashboardMonteCarloService  (3MINDIA / break_retest)
 ============================================================
 
   --- n_sims=10 ---
-  OK  elapsed=240.213s  rate=0 sims/s
+  OK  elapsed=77.202s  rate=0 sims/s
   available=True  sim_count=10  hist_trades=7
   verdict=WEAK  quality=LOW
   P(loss)=0.100  P(profit)=0.900
@@ -37,7 +37,7 @@
   [OK] resampling_limitation present
 
   --- n_sims=100 ---
-  OK  elapsed=262.707s  rate=0 sims/s
+  OK  elapsed=82.955s  rate=1 sims/s
   available=True  sim_count=100  hist_trades=7
   verdict=WEAK  quality=LOW
   P(loss)=0.090  P(profit)=0.910
@@ -48,7 +48,7 @@
   [OK] resampling_limitation present
 
   --- n_sims=1,000 ---
-  OK  elapsed=124.738s  rate=8 sims/s
+  OK  elapsed=107.513s  rate=9 sims/s
   available=True  sim_count=1000  hist_trades=7
   verdict=WEAK  quality=LOW
   P(loss)=0.114  P(profit)=0.886
@@ -64,9 +64,9 @@
 
 BENCHMARK TABLE:
       Sims    Time (s)      sims/s      Status
-        10     240.213           0          OK
-       100     262.707           0          OK
-     1,000     124.738           8          OK
+        10      77.202           0          OK
+       100      82.955           1          OK
+     1,000     107.513           9          OK
 
   Integration tests: ALL PASSED
 

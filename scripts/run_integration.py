@@ -10,12 +10,26 @@ Writes results to scripts\integration_output.txt
 """
 from __future__ import annotations
 
+import logging
 import sys
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+
+# ── Configure logging BEFORE any app imports so that every logger
+#    created by get_logger() already has a handler attached.
+#    Without this, all logger.info() calls in the service and replay
+#    engine are silently discarded (Python's "last resort" handler
+#    only fires for WARNING+ and only if no handler is configured).
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    stream=sys.stdout,
+    force=True,          # override any handler that a transitive import added first
+)
 
 OUT = Path(__file__).parent / "integration_output.txt"
 lines: list[str] = []
