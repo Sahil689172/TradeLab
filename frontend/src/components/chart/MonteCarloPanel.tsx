@@ -23,6 +23,7 @@ interface MonteCarloPanelProps {
 // Descriptions shown next to each count.  Keep in sync with ALLOWED_SIMULATIONS.
 const SIM_DESCRIPTIONS: Record<number, string> = {
   10:    'Quick test',
+  50:    'Light',
   100:   'Fast',
   500:   'Standard',
   1_000: 'Full',

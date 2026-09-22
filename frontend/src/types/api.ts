@@ -280,7 +280,7 @@ export interface MonteCarloRequest {
 // ── Allowed simulation counts — single source of truth for the frontend.
 //    Must stay in sync with ALLOWED_SIMULATION_COUNTS in
 //    app/services/dashboard/schemas.py
-export const ALLOWED_SIMULATIONS = [10, 100, 500, 1_000] as const;
+export const ALLOWED_SIMULATIONS = [10, 50, 100, 500, 1_000] as const;
 export type AllowedSimulations = (typeof ALLOWED_SIMULATIONS)[number];
 
 // ── Streaming types ────────────────────────────────────────────────────────
@@ -364,6 +364,8 @@ export interface MonteCarloDashboardResponse {
   probability_of_profit: number | null;
   probability_of_ruin: number | null;
   median_return_pct: number | null;
+  /** Arithmetic mean of all simulated terminal capital values (available=true runs only) */
+  mean_final_capital: number | null;
   return_percentiles: PercentileBand | null;
   max_drawdown_percentiles: PercentileBand | null;
   final_capital_percentiles: PercentileBand | null;

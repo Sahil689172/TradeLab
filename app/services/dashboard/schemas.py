@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # Single source of truth for allowed simulation counts.
 # Both the frontend and backend reference this list; any value outside it is
 # rejected by the backend validator so manual API calls cannot bypass it.
-ALLOWED_SIMULATION_COUNTS: tuple[int, ...] = (10, 100, 500, 1_000)
+ALLOWED_SIMULATION_COUNTS: tuple[int, ...] = (10, 50, 100, 500, 1_000)
 
 
 class DashboardSignal(str, Enum):
@@ -377,6 +377,9 @@ class MonteCarloDashboardResponse(BaseModel):
     probability_of_profit: float | None = None
     probability_of_ruin: float | None = None
     median_return_pct: float | None = None
+    # Arithmetic mean of all simulated terminal capital values.
+    # Represents the average/expected outcome across all simulation paths.
+    mean_final_capital: float | None = None
     return_percentiles: PercentileBand | None = None
     max_drawdown_percentiles: PercentileBand | None = None
     final_capital_percentiles: PercentileBand | None = None

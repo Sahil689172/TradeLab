@@ -638,6 +638,7 @@ class MonteCarloStreamingService:
             probability_of_profit=mc_result.probability_of_profit,
             probability_of_ruin=mc_result.probability_of_ruin,
             median_return_pct=mc_result.return_percentiles.p50,
+            mean_final_capital=round(float(np.mean(batch["final"])), 2),
             return_percentiles=PercentileBand.from_summary(mc_result.return_percentiles),
             max_drawdown_percentiles=PercentileBand.from_summary(
                 mc_result.max_drawdown_abs_percentiles

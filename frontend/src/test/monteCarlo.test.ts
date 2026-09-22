@@ -73,6 +73,7 @@ function makeResultEvent(simCount: number, histTrades: number) {
     probability_of_profit: 0.72,
     probability_of_ruin: 0.01,
     median_return_pct: 0.06,
+    mean_final_capital: 1_060_000,
     return_percentiles: { p05: -0.02, p25: 0.02, p50: 0.06, p75: 0.10, p95: 0.15 },
     max_drawdown_percentiles: null,
     final_capital_percentiles: null,

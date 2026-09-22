@@ -158,8 +158,14 @@ export function useMonteCarloStream() {
           setState((prev) => ({
             ...prev,
             status: 'complete',
-            statusMessage: 'Simulation complete',
-            pct: 100,
+            statusMessage: res.available ? 'Simulation complete' : res.message,
+            // Pin completed/total to the authoritative simulation count from
+            // the result.  When available=true the final progress event already
+            // set these correctly, but we set them here too so the display is
+            // correct even if the final progress event was dropped.
+            completed: res.available ? (res.simulation_count || prev.completed) : prev.completed,
+            total:     res.available ? (res.simulation_count || prev.total)     : prev.total,
+            pct: res.available ? 100 : prev.pct,
             etaSeconds: 0,
             bands: asBands(res._bands) ?? prev.bands,
             samplePaths: res._sample_paths?.length ? res._sample_paths : prev.samplePaths,

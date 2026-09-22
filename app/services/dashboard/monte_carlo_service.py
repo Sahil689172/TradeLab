@@ -225,6 +225,9 @@ class DashboardMonteCarloService:
             probability_of_profit=result.probability_of_profit,
             probability_of_ruin=result.probability_of_ruin,
             median_return_pct=result.return_percentiles.p50,
+            # mean_final_capital is not available from the engine summary object;
+            # it is only computed in the streaming path which has the raw arrays.
+            mean_final_capital=None,
             return_percentiles=PercentileBand.from_summary(result.return_percentiles),
             max_drawdown_percentiles=PercentileBand.from_summary(result.max_drawdown_abs_percentiles),
             final_capital_percentiles=PercentileBand.from_summary(result.final_capital_percentiles),
