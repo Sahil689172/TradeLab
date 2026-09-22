@@ -149,7 +149,21 @@ class HistoricalReplayEngine:
         strategies: list[BaseStrategy],
     ) -> tuple[list[ReplayStepResult], int]:
         session = self.create_session(symbol)
-        feature_frame = self._features.load_features(symbol)
+        feature_frame_raw = self._features.load_features(symbol)
+        # Pre-convert feature frame dates once here instead of inside
+        # slice_features_to_cursor() on every candle (O(N²) → O(N)).
+        # Also pre-compute all strategy indicator columns on the full frame
+        # so that _ensure_base_indicators() is a no-op on every per-candle
+        # slice (columns already present → immediate return with no rolling
+        # window recomputation per step).
+        if feature_frame_raw is not None and "date" in feature_frame_raw.columns:
+            feature_frame = feature_frame_raw.copy()
+            feature_frame["date"] = pd.to_datetime(feature_frame["date"])
+            # Ensure indicators are computed on the full history once.
+            from app.feature_engine.strategy_frame import ensure_strategy_indicators
+            feature_frame = ensure_strategy_indicators(feature_frame)
+        else:
+            feature_frame = feature_frame_raw
 
         self._emit(
             ReplayStarted(
@@ -164,6 +178,16 @@ class HistoricalReplayEngine:
         steps: list[ReplayStepResult] = []
         previous_ts: datetime | None = None
         steps_taken = 0
+        total_to_replay = session.total_candles - session.start_index
+        _log_interval = max(1, total_to_replay // 10)  # log every ~10%
+        _last_logged_pct = -1
+
+        import time as _time
+        _t_replay_start = _time.perf_counter()
+        logger.info(
+            "Replay START  symbol=%s  total_candles=%s  start_index=%s",
+            symbol, session.total_candles, session.start_index,
+        )
 
         while session.has_more():
             if self._config.max_steps is not None and steps_taken >= self._config.max_steps:
@@ -177,6 +201,18 @@ class HistoricalReplayEngine:
             )
             previous_ts = ts
             steps_taken += 1
+
+            # Progress logging every ~10% of candles.
+            if total_to_replay > 0:
+                pct = int(steps_taken * 100 / total_to_replay)
+                pct_bucket = (pct // 10) * 10
+                if pct_bucket > _last_logged_pct and pct_bucket <= 100:
+                    _last_logged_pct = pct_bucket
+                    elapsed = _time.perf_counter() - _t_replay_start
+                    logger.info(
+                        "Replay %s  %d%%  step=%s/%s  elapsed=%.1fs",
+                        symbol, pct_bucket, steps_taken, total_to_replay, elapsed,
+                    )
 
             self._emit(
                 NewCandle(
@@ -265,6 +301,11 @@ class HistoricalReplayEngine:
                 )
 
         session.mark_completed()
+        elapsed = _time.perf_counter() - _t_replay_start
+        logger.info(
+            "Replay DONE  symbol=%s  steps=%s  recs=%s  elapsed=%.2fs",
+            symbol, steps_taken, len(steps), elapsed,
+        )
         self._emit(
             ReplayCompleted(
                 timestamp=datetime.now(timezone.utc),

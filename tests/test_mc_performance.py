@@ -30,7 +30,6 @@ from app.backtesting.monte_carlo.simulation import (
     simulate_equity_batch,
     simulate_equity,
 )
-from app.backtesting.monte_carlo.validation import validate_config, validate_trades
 
 
 # ── reference _max_run (original Python loop) ─────────────────────────────
@@ -174,27 +173,31 @@ def test_simulate_equity_all_losses():
 # ── validate_config / validate_trades ──────────────────────────────────────
 
 def test_validate_config_rejects_zero_sims():
-    from app.backtesting.monte_carlo.exceptions import MonteCarloConfigError
-    with pytest.raises(MonteCarloConfigError):
-        validate_config(MonteCarloConfig(simulations=0))
+    # Pydantic enforces ge=1 at construction time — MonteCarloConfigError is
+    # never reached because the object cannot be built.
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        MonteCarloConfig(simulations=0)
 
 
 def test_validate_config_rejects_negative_capital():
-    with pytest.raises(Exception):
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
         MonteCarloConfig(initial_capital=-1.0)
 
 
 def test_validate_trades_rejects_nan_pnl():
-    from app.backtesting.monte_carlo.exceptions import MonteCarloDataError
-    bad = MonteCarloTrade(pnl=float("nan"), return_pct=0.0)
-    with pytest.raises((MonteCarloDataError, ValueError)):
-        validate_trades([bad], capital_mode=CapitalMode.ADDITIVE_PNL)
+    # Pydantic's finite_number validator rejects NaN at construction time.
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        MonteCarloTrade(pnl=float("nan"), return_pct=0.0)
 
 
 def test_validate_trades_rejects_inf_return():
-    bad = MonteCarloTrade(pnl=100.0, return_pct=float("inf"))
-    with pytest.raises((Exception,)):
-        validate_trades([bad], capital_mode=CapitalMode.ADDITIVE_PNL)
+    # Pydantic's finite_number validator rejects inf at construction time.
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        MonteCarloTrade(pnl=100.0, return_pct=float("inf"))
 
 
 # ── MC schema limits ────────────────────────────────────────────────────────

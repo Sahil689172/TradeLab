@@ -41,6 +41,12 @@ def load_trades_from_replay(
     min_history_bars: int = 60,
 ) -> tuple[list[MonteCarloTrade], dict[str, Any]]:
     """Run A5.1 replay + A5.2 execution and return completed-trade copies."""
+    import time as _time
+    t0 = _time.perf_counter()
+    logger.info(
+        "MC load_trades_from_replay START  symbols=%s strategies=%s",
+        symbols, strategy_names,
+    )
     replay = HistoricalReplayEngine(
         ReplayConfig(
             symbols=symbols,
@@ -53,6 +59,14 @@ def load_trades_from_replay(
             max_steps=max_steps,
         ),
     ).run()
+    t_replay = _time.perf_counter() - t0
+    logger.info(
+        "MC load_trades_from_replay  REPLAY DONE  elapsed=%.2fs  "
+        "candles=%s  recs=%s",
+        t_replay, replay.candles_replayed, replay.recommendations_generated,
+    )
+
+    t1 = _time.perf_counter()
     execution = OrderExecutionEngine(
         ExecutionConfig(
             initial_capital=initial_capital,
@@ -64,7 +78,10 @@ def load_trades_from_replay(
         ),
     )
     exec_result = execution.process_replay_result(replay)
+    t_exec = _time.perf_counter() - t1
+
     trades = trades_from_sources(exec_result.trade_log)
+    total = _time.perf_counter() - t0
     meta = {
         "candles_replayed": replay.candles_replayed,
         "recommendations": replay.recommendations_generated,
@@ -75,10 +92,11 @@ def load_trades_from_replay(
         "period": _period(exec_result.trade_log),
     }
     logger.info(
-        "Monte Carlo source trades=%s filled=%s rejected=%s",
-        len(trades),
-        exec_result.orders_filled,
-        exec_result.orders_rejected,
+        "MC load_trades_from_replay  DONE  total=%.2fs  "
+        "replay=%.2fs  execution=%.2fs  "
+        "trades=%s  filled=%s  rejected=%s",
+        total, t_replay, t_exec,
+        len(trades), exec_result.orders_filled, exec_result.orders_rejected,
     )
     return trades, meta
 

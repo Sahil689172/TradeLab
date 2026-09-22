@@ -103,14 +103,20 @@ class ReplaySession:
         return self._candles.iloc[self._index]
 
     def historical_window(self) -> pd.DataFrame:
-        """Return candles ``[0 .. current_index]`` inclusive — no future rows."""
+        """Return candles ``[0 .. current_index]`` inclusive — no future rows.
+
+        Returns an iloc slice (no copy).  The master ``_candles`` frame is
+        normalised once at construction and never mutated, so callers receive a
+        read-consistent view without paying for a full-frame copy on every candle.
+        Callers that need to mutate the result must copy it themselves.
+        """
         if self._index < self._start_index:
             raise ReplaySessionError(
                 f"{self._symbol}: cannot build window before the first candle",
             )
-        window = self._candles.iloc[: self._index + 1].copy()
+        window = self._candles.iloc[: self._index + 1]
         self.assert_no_lookahead(window)
-        return window.reset_index(drop=True)
+        return window
 
     def assert_no_lookahead(self, window: pd.DataFrame) -> None:
         """Guard: every row in ``window`` must be at or before the cursor timestamp."""
@@ -183,17 +189,32 @@ class ReplaySession:
         self._status = ReplayStatus.COMPLETED
 
     def slice_features_to_cursor(self, features: pd.DataFrame) -> pd.DataFrame:
-        """Align an external feature frame to timestamps ≤ cursor (no future)."""
+        """Align an external feature frame to timestamps ≤ cursor (no future).
+
+        Previously called ``features.copy()`` on the entire frame before
+        filtering — O(N) copy per candle → O(N²) total.  Now we filter on the
+        original frame and copy only the (much smaller) clipped result.
+
+        The caller (HistoricalReplayEngine._run_symbol) pre-converts the
+        features frame dates to datetime once before the loop, so
+        ``pd.to_datetime`` is skipped when the column is already datetime dtype.
+        """
         if self._index < self._start_index:
             raise ReplaySessionError(f"{self._symbol}: cursor not advanced")
         if "date" not in features.columns:
             raise ReplayConfigurationError("features must contain a 'date' column")
         cursor_ts = pd.Timestamp(self._candles.iloc[self._index]["date"])
-        work = features.copy()
-        work["date"] = pd.to_datetime(work["date"])
-        clipped = work.loc[work["date"] <= cursor_ts].sort_values("date")
+        date_col = features["date"]
+        # Skip pd.to_datetime if already datetime dtype (pre-converted by caller).
+        if not pd.api.types.is_datetime64_any_dtype(date_col):
+            date_col = pd.to_datetime(date_col)
+        mask = date_col <= cursor_ts
+        clipped = features.loc[mask].copy()
+        if not pd.api.types.is_datetime64_any_dtype(clipped["date"]):
+            clipped["date"] = pd.to_datetime(clipped["date"])
+        clipped = clipped.sort_values("date").reset_index(drop=True)
         self.assert_no_lookahead(clipped)
-        return clipped.reset_index(drop=True)
+        return clipped
 
 
 def _normalize_candles(candles: pd.DataFrame) -> pd.DataFrame:

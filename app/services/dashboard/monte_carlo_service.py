@@ -30,6 +30,10 @@ from app.services.dashboard.schemas import (
 )
 from app.services.trade_recommendation.strategy_validation import STRATEGY_REGISTERARS
 
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
 _OOS_STRATEGIES = frozenset({"ema_trend", "ema_professional", "ema_trend_professional", "ema"})
 # Horizon bands use bootstrap on daily returns.
 # 200 samples give stable P5/P50/P95 bands (well within Monte Carlo error tolerance)
@@ -107,13 +111,30 @@ class DashboardMonteCarloService:
         return trades, trade_source, period, warnings
 
     def run(self, symbol: str, request: MonteCarloDashboardRequest) -> MonteCarloDashboardResponse:
+        import time as _time
+        _t0 = _time.perf_counter()
+        logger.info(
+            "MC service START  symbol=%s  strategy=%s  simulations=%s",
+            symbol, request.strategy, request.simulations,
+        )
+
+        _t1 = _time.perf_counter()
         trades, trade_source, period, warnings = self._load_trades(symbol, request)
+        logger.info(
+            "MC service  STAGE load_trades  elapsed=%.2fs  trades=%s  source=%s",
+            _time.perf_counter() - _t1, len(trades), trade_source,
+        )
+
         base = parquet_basename(symbol).upper()
         strategy = request.strategy.strip().lower()
         storage = Path(self._settings.parquet_storage_dir)
         parquet = storage / f"{base}.parquet"
 
         if not trades:
+            logger.info(
+                "MC service  NO TRADES  elapsed=%.2fs",
+                _time.perf_counter() - _t0,
+            )
             return MonteCarloDashboardResponse(
                 symbol=base,
                 strategy=strategy,
@@ -130,22 +151,36 @@ class DashboardMonteCarloService:
             initial_capital=request.initial_capital,
             random_seed=request.random_seed,
         )
+        _t2 = _time.perf_counter()
         result: MonteCarloResult = MonteCarloEngine(mc_config).run(
             trades,
             strategy=strategy,
             symbol=base,
             period=period,
         )
+        logger.info(
+            "MC service  STAGE monte_carlo  elapsed=%.2fs  sims=%s",
+            _time.perf_counter() - _t2, request.simulations,
+        )
+
         all_warnings = list(warnings) + list(result.warnings)
         all_warnings.append(
             f"{result.simulations:,} simulations resampled from {result.source_trade_count} "
             "historical completed trades. Simulation count does not increase sample size.",
         )
         outlook = self._next_day_outlook(result, base, strategy, trade_source)
+
+        _t3 = _time.perf_counter()
         current_price, daily_returns, horizons = self._horizon_inputs(
             parquet,
             request,
         )
+        logger.info(
+            "MC service  STAGE horizon_inputs  elapsed=%.2fs  returns=%s  price=%.2f",
+            _time.perf_counter() - _t3, len(daily_returns), current_price,
+        )
+
+        _t4 = _time.perf_counter()
         horizon_rows = [
             HorizonOutlook(
                 trading_days=band.trading_days,
@@ -170,7 +205,13 @@ class DashboardMonteCarloService:
                 random_seed=request.random_seed,
             )
         ]
-        return MonteCarloDashboardResponse(
+        logger.info(
+            "MC service  STAGE horizon_bands  elapsed=%.2fs  bands=%s",
+            _time.perf_counter() - _t4, len(horizon_rows),
+        )
+
+        _t5 = _time.perf_counter()
+        response = MonteCarloDashboardResponse(
             symbol=base,
             strategy=strategy,
             trade_source=trade_source,
@@ -199,6 +240,18 @@ class DashboardMonteCarloService:
             warnings=all_warnings,
             resampling_limitation=RESAMPLING_LIMITATION,
         )
+        logger.info(
+            "MC service  STAGE response_construction  elapsed=%.2fs",
+            _time.perf_counter() - _t5,
+        )
+        logger.info(
+            "MC service DONE  symbol=%s  strategy=%s  simulations=%s  "
+            "total_elapsed=%.2fs  trades=%s  verdict=%s",
+            symbol, request.strategy, request.simulations,
+            _time.perf_counter() - _t0,
+            len(trades), result.verdict.value if result else "N/A",
+        )
+        return response
 
     def _horizon_inputs(
         self,

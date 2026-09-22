@@ -1,0 +1,103 @@
+C:\Users\hp\OneDrive\Desktop\TradeLab\scripts\run_integration.py:6: SyntaxWarning: invalid escape sequence '\S'
+  .venv\Scripts\python.exe scripts\run_integration.py
+
+============================================================
+  INTEGRATION TEST — full service path
+============================================================
+
+============================================================
+  Finding available symbol
+============================================================
+  Using symbol: 3MINDIA
+  Parquet store: backend\data\ohlcv
+  Available symbols: ['3MINDIA', '3MINDIA_features', 'AAVAS', 'AAVAS_features', 'ABB'] ...
+
+============================================================
+  Choosing strategy
+============================================================
+  Strategy: break_retest  (non-WF — uses historical replay trades)
+  All registered strategies: ['break_retest', 'cpr', 'darvas', 'darvas_box', 'donchian', 'ema', 'ema_professional', 'ema_raw'] ...
+
+============================================================
+  Importing service layer
+============================================================
+  Imports OK  (873 ms)
+
+============================================================
+  Running MC via DashboardMonteCarloService  (3MINDIA / break_retest)
+============================================================
+
+  --- n_sims=10 ---
+  OK  elapsed=99.132s  rate=0 sims/s
+  available=True  sim_count=10  hist_trades=7
+  verdict=WEAK  quality=LOW
+  P(loss)=0.100  P(profit)=0.900
+  trade_source=HISTORICAL REPLAY TRADES
+  horizon_bands=3
+  warnings=9
+  [OK] simulation_count(10) != historical_oos_trade_count(7)
+  [OK] resampling_limitation present
+
+  --- n_sims=100 ---
+Traceback (most recent call last):
+  File "C:\Users\hp\OneDrive\Desktop\TradeLab\scripts\run_integration.py", line 110, in <module>
+    resp: MonteCarloDashboardResponse = svc.run(symbol, req)
+                                        ~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\hp\OneDrive\Desktop\TradeLab\app\services\dashboard\monte_carlo_service.py", line 122, in run
+    trades, trade_source, period, warnings = self._load_trades(symbol, request)
+                                             ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\OneDrive\Desktop\TradeLab\app\services\dashboard\monte_carlo_service.py", line 95, in _load_trades
+    trades, meta = load_trades_from_replay(
+                   ~~~~~~~~~~~~~~~~~~~~~~~^
+        symbols=[base],
+        ^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        storage_dir=storage,
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\hp\OneDrive\Desktop\TradeLab\app\backtesting\monte_carlo\pipeline.py", line 61, in load_trades_from_replay
+    ).run()
+      ~~~^^
+  File "C:\Users\hp\OneDrive\Desktop\TradeLab\app\backtesting\replay_engine\engine.py", line 114, in run
+    symbol_steps, advanced = self._run_symbol(symbol, strategies)
+                             ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\OneDrive\Desktop\TradeLab\app\backtesting\replay_engine\engine.py", line 252, in _run_symbol
+    recommendation = self._evaluator.evaluate(
+        strategy=strategy,
+    ...<3 lines>...
+        timeframe=self._config.timeframe,
+    )
+  File "C:\Users\hp\OneDrive\Desktop\TradeLab\app\backtesting\replay_engine\adapters.py", line 103, in evaluate
+    plan = strategy.execute(context)
+  File "C:\Users\hp\OneDrive\Desktop\TradeLab\app\strategy_engine\base.py", line 95, in execute
+    return StrategyContextProvider().execute_context(self, context)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "C:\Users\hp\OneDrive\Desktop\TradeLab\app\services\strategy_context\context_provider.py", line 267, in execute_context
+    return self._runner.run(context.features, strategy)
+           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\OneDrive\Desktop\TradeLab\app\strategy_engine\runner.py", line 91, in run
+    signal = strategy.generate_signal(prepared)
+  File "C:\Users\hp\OneDrive\Desktop\TradeLab\app\strategies\break_retest\strategy.py", line 205, in generate_signal
+    setup = self._assess(features)
+  File "C:\Users\hp\OneDrive\Desktop\TradeLab\app\strategies\break_retest\strategy.py", line 316, in _assess
+    long_seq, short_seq = self._engine.scan_both(
+                          ~~~~~~~~~~~~~~~~~~~~~~^
+        features,
+        ^^^^^^^^^
+        resistance=self._resistance,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        support=self._support,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\hp\OneDrive\Desktop\TradeLab\app\services\strategy_engine\break_retest\engine.py", line 229, in scan_both
+    long_seq = self.scan(
+        frame,
+    ...<2 lines>...
+        _arrays=arrays,
+    )
+  File "C:\Users\hp\OneDrive\Desktop\TradeLab\app\services\strategy_engine\break_retest\engine.py", line 119, in scan
+    low = float(lows[index])
+KeyboardInterrupt
+^C

@@ -1,0 +1,76 @@
+
+============================================================
+  INTEGRATION TEST — full service path
+============================================================
+
+============================================================
+  Finding available symbol
+============================================================
+  Using symbol: 3MINDIA
+  Parquet store: backend\data\ohlcv
+  Available symbols: ['3MINDIA', '3MINDIA_features', 'AAVAS', 'AAVAS_features', 'ABB'] ...
+
+============================================================
+  Choosing strategy
+============================================================
+  Strategy: break_retest  (non-WF — uses historical replay trades)
+  All registered strategies: ['break_retest', 'cpr', 'darvas', 'darvas_box', 'donchian', 'ema', 'ema_professional', 'ema_raw'] ...
+
+============================================================
+  Importing service layer
+============================================================
+  Imports OK  (906 ms)
+
+============================================================
+  Running MC via DashboardMonteCarloService  (3MINDIA / break_retest)
+============================================================
+
+  --- n_sims=10 ---
+  OK  elapsed=240.213s  rate=0 sims/s
+  available=True  sim_count=10  hist_trades=7
+  verdict=WEAK  quality=LOW
+  P(loss)=0.100  P(profit)=0.900
+  trade_source=HISTORICAL REPLAY TRADES
+  horizon_bands=3
+  warnings=9
+  [OK] simulation_count(10) != historical_oos_trade_count(7)
+  [OK] resampling_limitation present
+
+  --- n_sims=100 ---
+  OK  elapsed=262.707s  rate=0 sims/s
+  available=True  sim_count=100  hist_trades=7
+  verdict=WEAK  quality=LOW
+  P(loss)=0.090  P(profit)=0.910
+  trade_source=HISTORICAL REPLAY TRADES
+  horizon_bands=3
+  warnings=9
+  [OK] simulation_count(100) != historical_oos_trade_count(7)
+  [OK] resampling_limitation present
+
+  --- n_sims=1,000 ---
+  OK  elapsed=124.738s  rate=8 sims/s
+  available=True  sim_count=1000  hist_trades=7
+  verdict=WEAK  quality=LOW
+  P(loss)=0.114  P(profit)=0.886
+  trade_source=HISTORICAL REPLAY TRADES
+  horizon_bands=3
+  warnings=9
+  [OK] simulation_count(1000) != historical_oos_trade_count(7)
+  [OK] resampling_limitation present
+
+============================================================
+  SUMMARY
+============================================================
+
+BENCHMARK TABLE:
+      Sims    Time (s)      sims/s      Status
+        10     240.213           0          OK
+       100     262.707           0          OK
+     1,000     124.738           8          OK
+
+  Integration tests: ALL PASSED
+
+VALIDATION CHECKS:
+  [n=10] sim_count_correct  hist_trades_independent  probabilities_valid
+  [n=100] sim_count_correct  hist_trades_independent  probabilities_valid
+  [n=1000] sim_count_correct  hist_trades_independent  probabilities_valid
