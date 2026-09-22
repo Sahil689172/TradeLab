@@ -30,7 +30,7 @@ export function StockSelector({ symbol, onSymbolChange }: StockSelectorProps) {
 
   const stocksQuery = useQuery({
     queryKey: ['stocks', query],
-    queryFn: () => api.listStocks(query, 50),
+    queryFn: () => api.listStocks(query, 100),
     enabled: open || query.length > 0,
   });
 

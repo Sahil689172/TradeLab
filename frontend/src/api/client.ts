@@ -95,23 +95,27 @@ export const api = {
     );
   },
 
-  getPortfolio() {
-    return request<PortfolioResponse>('/portfolio');
+  getPortfolio(user?: string) {
+    const params = user ? `?user=${encodeURIComponent(user)}` : '';
+    return request<PortfolioResponse>(`/portfolio${params}`);
   },
 
-  listOrders() {
-    return request<OrderRow[]>('/orders');
+  listOrders(user?: string) {
+    const params = user ? `?user=${encodeURIComponent(user)}` : '';
+    return request<OrderRow[]>(`/orders${params}`);
   },
 
-  buyOrder(body: OrderRequest) {
-    return request<OrderResponse>('/orders/buy', {
+  buyOrder(body: OrderRequest, user?: string) {
+    const params = user ? `?user=${encodeURIComponent(user)}` : '';
+    return request<OrderResponse>(`/orders/buy${params}`, {
       method: 'POST',
       body: JSON.stringify(body),
     });
   },
 
-  sellOrder(body: OrderRequest) {
-    return request<OrderResponse>('/orders/sell', {
+  sellOrder(body: OrderRequest, user?: string) {
+    const params = user ? `?user=${encodeURIComponent(user)}` : '';
+    return request<OrderResponse>(`/orders/sell${params}`, {
       method: 'POST',
       body: JSON.stringify(body),
     });

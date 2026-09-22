@@ -21,6 +21,8 @@ from app.services.dashboard.monte_carlo_streaming import (
     register_cancel_token,
     unregister_cancel_token,
 )
+from app.core.database import get_db
+from app.paper_trading.persistence import load_user_book, save_user_book
 from app.services.dashboard.paper_trading_service import get_paper_book
 from app.services.dashboard.portfolio_service import PortfolioService
 from app.services.dashboard.schemas import (
@@ -42,6 +44,10 @@ from app.services.dashboard.schemas import (
 )
 from app.services.dashboard.strategy_service import get_strategy_service
 from app.services.dashboard.universe_service import get_universe_service
+from sqlalchemy.orm import Session
+
+# Default user handle when no ?user= is provided (single-user / legacy mode).
+_DEFAULT_USER = "default"
 
 router = APIRouter(tags=["dashboard"])
 
@@ -243,25 +249,31 @@ def cancel_monte_carlo(run_id: str) -> SuccessResponse[dict]:
 
 @router.get("/portfolio", response_model=SuccessResponse[PortfolioResponse])
 def get_portfolio(
+    user: str = Query(default=_DEFAULT_USER, max_length=40),
     gateway: MarketDataGateway = Depends(get_market_data_gateway),
+    session: Session = Depends(get_db),
 ) -> SuccessResponse[PortfolioResponse]:
-    book = get_paper_book()
+    book = load_user_book(session, user_handle=user)
     data = PortfolioService(book).build(gateway=gateway)
     return SuccessResponse(data=data)
 
 
 @router.get("/positions", response_model=SuccessResponse[PortfolioResponse])
 def get_positions(
+    user: str = Query(default=_DEFAULT_USER, max_length=40),
     gateway: MarketDataGateway = Depends(get_market_data_gateway),
+    session: Session = Depends(get_db),
 ) -> SuccessResponse[PortfolioResponse]:
-    return get_portfolio(gateway=gateway)
+    return get_portfolio(user=user, gateway=gateway, session=session)
 
 
 @router.get("/orders", response_model=SuccessResponse[list[OrderRow]])
-def list_orders() -> SuccessResponse[list[OrderRow]]:
-    book = get_paper_book()
+def list_orders(
+    user: str = Query(default=_DEFAULT_USER, max_length=40),
+    session: Session = Depends(get_db),
+) -> SuccessResponse[list[OrderRow]]:
+    book = load_user_book(session, user_handle=user)
     from app.services.dashboard.paper_trading_service import _to_order_row
-
     rows = [_to_order_row(record) for record in book.orders]
     return SuccessResponse(data=rows)
 
@@ -269,24 +281,30 @@ def list_orders() -> SuccessResponse[list[OrderRow]]:
 @router.post("/orders/buy", response_model=SuccessResponse[OrderResponse])
 def buy_order(
     request: OrderRequest,
+    user: str = Query(default=_DEFAULT_USER, max_length=40),
     gateway: MarketDataGateway = Depends(get_market_data_gateway),
+    session: Session = Depends(get_db),
 ) -> SuccessResponse[OrderResponse]:
     market = get_market_service()
     price = request.price or market.latest_close(request.symbol, gateway=gateway)
     if price is None or price <= 0:
         raise HTTPException(status_code=400, detail="No market price available; bootstrap symbol or pass price")
-    result = get_paper_book().place_order(
+    book = load_user_book(session, user_handle=user)
+    result = book.place_order(
         side=OrderSide.BUY,
         request=request,
         market_price=price,
     )
+    save_user_book(session, user_handle=user, book=book)
     return SuccessResponse(data=result, message=result.message)
 
 
 @router.post("/orders/sell", response_model=SuccessResponse[OrderResponse])
 def sell_order(
     request: OrderRequest,
+    user: str = Query(default=_DEFAULT_USER, max_length=40),
     gateway: MarketDataGateway = Depends(get_market_data_gateway),
+    session: Session = Depends(get_db),
 ) -> SuccessResponse[OrderResponse]:
     from app.services.dashboard.schemas import OrderSide as ApiOrderSide
 
@@ -294,19 +312,23 @@ def sell_order(
     price = request.price or market.latest_close(request.symbol, gateway=gateway)
     if price is None or price <= 0:
         raise HTTPException(status_code=400, detail="No market price available; bootstrap symbol or pass price")
-    result = get_paper_book().place_order(
+    book = load_user_book(session, user_handle=user)
+    result = book.place_order(
         side=ApiOrderSide.SELL,
         request=request,
         market_price=price,
     )
+    save_user_book(session, user_handle=user, book=book)
     return SuccessResponse(data=result, message=result.message)
 
 
 @router.get("/risk", response_model=SuccessResponse[PortfolioResponse])
 def get_risk(
+    user: str = Query(default=_DEFAULT_USER, max_length=40),
     gateway: MarketDataGateway = Depends(get_market_data_gateway),
+    session: Session = Depends(get_db),
 ) -> SuccessResponse[PortfolioResponse]:
-    return get_portfolio(gateway=gateway)
+    return get_portfolio(user=user, gateway=gateway, session=session)
 
 
 @router.get("/system/status", response_model=SuccessResponse[SystemStatus])

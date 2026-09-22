@@ -126,9 +126,16 @@ def get_room(
 @router.delete("/rooms/{room_id}", response_model=SuccessResponse[dict])
 def delete_room(
     room_id: str,
+    user: str = Query(..., min_length=1, max_length=40, description="Must be the room owner"),
     service: RoomService = Depends(get_room_service),
 ) -> SuccessResponse[dict]:
-    """Delete a room, its messages, and its shared book."""
+    """Delete a room, its messages, and its shared book. Only the room owner may delete."""
+    try:
+        room = service.get_room(room_id)
+    except CollabError as exc:
+        raise _http_error(exc) from exc
+    if room.created_by != user:
+        raise HTTPException(status_code=403, detail="Only the room owner may delete this room")
     removed = service.delete_room(room_id)
     if not removed:
         raise HTTPException(status_code=404, detail=f"Room '{room_id}' not found")
@@ -171,11 +178,13 @@ def leave_room(
 @router.get("/rooms/{room_id}/messages", response_model=SuccessResponse[MessageListResponse])
 def list_messages(
     room_id: str,
+    user: str = Query(..., min_length=1, max_length=40),
     limit: int = Query(default=50, ge=1, le=500),
     service: RoomService = Depends(get_room_service),
 ) -> SuccessResponse[MessageListResponse]:
-    """Return recent room history, oldest first."""
+    """Return recent room history, oldest first. Caller must be a member."""
     try:
+        service.require_member(room_id, user)
         messages = service.history(room_id, limit=limit)
     except CollabError as exc:
         raise _http_error(exc) from exc
@@ -225,11 +234,13 @@ async def post_trade_idea(
 @router.get("/rooms/{room_id}/portfolio", response_model=SuccessResponse[PortfolioResponse])
 def room_portfolio(
     room_id: str,
+    user: str = Query(..., min_length=1, max_length=40),
     service: RoomService = Depends(get_room_service),
     gateway: MarketDataGateway = Depends(get_market_data_gateway),
 ) -> SuccessResponse[PortfolioResponse]:
-    """Return the room's shared paper portfolio."""
+    """Return the room's shared paper portfolio. Caller must be a member."""
     try:
+        service.require_member(room_id, user)
         data = service.portfolio(room_id, gateway=gateway)
     except CollabError as exc:
         raise _http_error(exc) from exc
@@ -239,11 +250,13 @@ def room_portfolio(
 @router.get("/rooms/{room_id}/orders", response_model=SuccessResponse[list[OrderRow]])
 def room_orders(
     room_id: str,
+    user: str = Query(..., min_length=1, max_length=40),
     limit: int = Query(default=50, ge=1, le=200),
     service: RoomService = Depends(get_room_service),
 ) -> SuccessResponse[list[OrderRow]]:
-    """Return recent paper orders placed in the room."""
+    """Return recent paper orders placed in the room. Caller must be a member."""
     try:
+        service.require_member(room_id, user)
         rows = service.orders(room_id, limit=limit)
     except CollabError as exc:
         raise _http_error(exc) from exc

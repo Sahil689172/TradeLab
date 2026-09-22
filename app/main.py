@@ -87,9 +87,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = cfg
 
+    # CORS — merge hard-coded dev origins with any extra origins from the
+    # ALLOWED_ORIGINS env var (comma-separated) so production deployments
+    # can add their CloudFront domain without code changes.
+    _dev_origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+    ]
+    _extra = [o.strip() for o in (cfg.allowed_origins or "").split(",") if o.strip()]
+    _all_origins = list(dict.fromkeys(_dev_origins + _extra))  # dedup, preserve order
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"],
+        allow_origins=_all_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

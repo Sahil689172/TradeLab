@@ -299,7 +299,11 @@ class SimulatedBroker:
                 reason_code=RejectionReason.VALIDATION_FAILURE,
             )
 
-        qty = position.quantity
+        # Use the order's quantity, not the whole position.
+        # Partial sells reduce the position; full sells close it entirely.
+        qty = order.quantity
+        is_full_close = qty >= position.quantity - 1e-12
+
         exec_price = execution_price(OrderSide.SELL, order.reference_price, self._config.slippage_bps)
         slippage_per_unit = order.reference_price - exec_price
         notional = exec_price * qty
@@ -308,8 +312,13 @@ class SimulatedBroker:
         slippage_cost = abs(slippage_per_unit) * qty
 
         gross = (exec_price - position.average_entry_price) * qty
-        total_brokerage = position.entry_brokerage + brokerage
-        total_slippage = position.entry_slippage_cost + slippage_cost
+
+        # Allocate entry costs proportionally to the quantity being sold.
+        qty_fraction = qty / position.quantity if position.quantity > 0 else 1.0
+        entry_brokerage_alloc = position.entry_brokerage * qty_fraction
+        entry_slippage_alloc = position.entry_slippage_cost * qty_fraction
+        total_brokerage = entry_brokerage_alloc + brokerage
+        total_slippage = entry_slippage_alloc + slippage_cost
         realized = gross - total_brokerage - total_slippage
 
         self._cash += proceeds
@@ -319,7 +328,27 @@ class SimulatedBroker:
             position=position,
             exit_price=exec_price,
         )
-        self._positions.pop(order.symbol, None)
+
+        if is_full_close:
+            # Remove the position entirely.
+            self._positions.pop(order.symbol, None)
+        else:
+            # Reduce the position: keep average_entry_price unchanged,
+            # reduce quantity, and reduce the proportional entry-cost bookings.
+            remaining_qty = position.quantity - qty
+            remaining_fraction = remaining_qty / position.quantity
+            updated_position = PositionState(
+                symbol=position.symbol,
+                quantity=remaining_qty,
+                average_entry_price=position.average_entry_price,
+                entry_brokerage=position.entry_brokerage * remaining_fraction,
+                entry_slippage_cost=position.entry_slippage_cost * remaining_fraction,
+                opened_at=position.opened_at,
+                stop_loss=position.stop_loss,
+                target_1=position.target_1,
+                strategy_name=position.strategy_name,
+            )
+            self._positions[order.symbol] = updated_position
 
         fill = Fill(
             order_id=order.order_id,
@@ -361,13 +390,14 @@ class SimulatedBroker:
             ),
         )
         logger.info(
-            "FILL SELL %s qty=%.6g px=%.6g pnl=%.4f cash=%.2f reason=%s",
+            "FILL SELL %s qty=%.6g px=%.6g pnl=%.4f cash=%.2f reason=%s partial=%s",
             order.symbol,
             qty,
             exec_price,
             realized,
             self._cash,
             reason.value,
+            not is_full_close,
         )
         return fill
 

@@ -103,6 +103,13 @@ class Settings(BaseSettings):
         le=500,
         description="Messages replayed to a client when it joins a room",
     )
+    # CORS — additional production origins (comma-separated).
+    # Dev origins (localhost:5173 etc.) are always included.
+    allowed_origins: str = Field(
+        default="",
+        description="Comma-separated extra CORS origins, e.g. https://d1234.cloudfront.net",
+    )
+
     room_default_capacity: int = Field(
         default=2,
         ge=1,

@@ -92,9 +92,38 @@ class CollabRepository:
         return self._session.get(ChatRoomModel, room_id) is not None
 
     def list_rooms(self, limit: int = 100) -> list[RoomSummary]:
-        """Return the most recently created rooms."""
+        """Return the most recently created rooms.
+
+        Uses two bulk queries (members + message counts) instead of
+        N × 2 individual queries to avoid the N+1 problem.
+        """
         stmt = select(ChatRoomModel).order_by(ChatRoomModel.created_at.desc()).limit(limit)
         rooms = self._session.execute(stmt).scalars().all()
+        if not rooms:
+            return []
+
+        room_ids = [r.room_id for r in rooms]
+
+        # Bulk-fetch all members for these rooms in one query.
+        members_stmt = (
+            select(RoomMemberModel.room_id, RoomMemberModel.user)
+            .where(RoomMemberModel.room_id.in_(room_ids))
+            .order_by(RoomMemberModel.joined_at.asc())
+        )
+        members_by_room: dict[str, list[str]] = {rid: [] for rid in room_ids}
+        for row in self._session.execute(members_stmt):
+            members_by_room[row.room_id].append(row.user)
+
+        # Bulk-fetch message counts for these rooms in one query.
+        counts_stmt = (
+            select(ChatMessageModel.room_id, func.count().label("cnt"))
+            .where(ChatMessageModel.room_id.in_(room_ids))
+            .group_by(ChatMessageModel.room_id)
+        )
+        counts_by_room: dict[str, int] = {rid: 0 for rid in room_ids}
+        for row in self._session.execute(counts_stmt):
+            counts_by_room[row.room_id] = int(row.cnt)
+
         return [
             RoomSummary(
                 room_id=r.room_id,
@@ -103,8 +132,8 @@ class CollabRepository:
                 created_at=_as_aware(r.created_at),
                 capacity=r.capacity,
                 initial_capital=r.initial_capital,
-                members=self.list_members(r.room_id),
-                message_count=self.count_messages(r.room_id),
+                members=members_by_room.get(r.room_id, []),
+                message_count=counts_by_room.get(r.room_id, 0),
             )
             for r in rooms
         ]

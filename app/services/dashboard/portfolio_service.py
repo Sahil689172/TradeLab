@@ -32,7 +32,7 @@ class PortfolioService:
             invested += inv
             current_value += cur
             unrealized += cur - inv
-        total_value = account.equity if account.equity else current_value
+        total_value = current_value if current_value > 0 else account.equity
         return PortfolioKPIs(
             total_invested=invested,
             current_value=total_value,

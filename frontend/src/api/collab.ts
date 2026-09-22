@@ -6,7 +6,7 @@
  * plus the AI status banner.
  */
 
-import type { PortfolioResponse } from '../types/api';
+import type { PortfolioResponse, OrderResponse } from '../types/api';
 import type {
   AIStatus,
   ChatMessage,
@@ -35,9 +35,9 @@ export const collabApi = {
     });
   },
 
-  deleteRoom(roomId: string) {
+  deleteRoom(roomId: string, user: string) {
     return request<Record<string, unknown>>(
-      `/collab/rooms/${encodeURIComponent(roomId)}`,
+      `/collab/rooms/${encodeURIComponent(roomId)}?user=${encodeURIComponent(user)}`,
       { method: 'DELETE' },
     );
   },
@@ -49,15 +49,15 @@ export const collabApi = {
     );
   },
 
-  getMessages(roomId: string, limit = 50) {
+  getMessages(roomId: string, user: string, limit = 50) {
     return request<MessageListResponse>(
-      `/collab/rooms/${encodeURIComponent(roomId)}/messages?limit=${limit}`,
+      `/collab/rooms/${encodeURIComponent(roomId)}/messages?user=${encodeURIComponent(user)}&limit=${limit}`,
     );
   },
 
-  getPortfolio(roomId: string) {
+  getPortfolio(roomId: string, user: string) {
     return request<PortfolioResponse>(
-      `/collab/rooms/${encodeURIComponent(roomId)}/portfolio`,
+      `/collab/rooms/${encodeURIComponent(roomId)}/portfolio?user=${encodeURIComponent(user)}`,
     );
   },
 
@@ -69,7 +69,7 @@ export const collabApi = {
   },
 
   placeOrder(roomId: string, body: RoomOrderRequest) {
-    return request<unknown>(`/collab/rooms/${encodeURIComponent(roomId)}/orders`, {
+    return request<OrderResponse>(`/collab/rooms/${encodeURIComponent(roomId)}/orders`, {
       method: 'POST',
       body: JSON.stringify(body),
     });

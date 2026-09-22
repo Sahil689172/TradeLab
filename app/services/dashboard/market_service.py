@@ -115,6 +115,9 @@ class DashboardMarketService:
                 result = gateway.bootstrap_symbol(yahoo)
             self._last_refresh = datetime.now(timezone.utc)
             ok = result.status in {"downloaded", "updated", "up_to_date", "skipped"}
+            # Drop the cached price so the next /stocks read picks up the new data.
+            from app.services.dashboard.universe_service import invalidate_price_cache
+            invalidate_price_cache(yahoo)
             return RefreshStatus(
                 success=ok,
                 message=result.message,
@@ -166,6 +169,9 @@ class DashboardMarketService:
                     failed += 1
                     messages.append(f"{yahoo}: {exc}")
             self._last_refresh = datetime.now(timezone.utc)
+            # Invalidate all cached prices so the next /stocks read reflects the refresh.
+            from app.services.dashboard.universe_service import invalidate_price_cache
+            invalidate_price_cache(None)
             return RefreshStatus(
                 success=failed == 0,
                 message="; ".join(messages) if messages else f"Refreshed {updated} symbol(s)",

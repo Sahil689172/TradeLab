@@ -37,9 +37,9 @@ export function RoomPage({ handle }: RoomPageProps) {
   // Seeds the right pane before the first `portfolio` frame arrives; after
   // that the socket is the source of truth.
   const { data: seedPortfolio } = useQuery({
-    queryKey: ['collab', 'portfolio', roomId],
-    queryFn: () => collabApi.getPortfolio(roomId as string),
-    enabled: Boolean(roomId),
+    queryKey: ['collab', 'portfolio', roomId, handle],
+    queryFn: () => collabApi.getPortfolio(roomId as string, handle),
+    enabled: Boolean(roomId) && Boolean(handle.trim()),
   });
 
   const socket = useRoomSocket(roomId, handle);
