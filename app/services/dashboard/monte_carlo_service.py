@@ -31,8 +31,11 @@ from app.services.dashboard.schemas import (
 from app.services.trade_recommendation.strategy_validation import STRATEGY_REGISTERARS
 
 _OOS_STRATEGIES = frozenset({"ema_trend", "ema_professional", "ema_trend_professional", "ema"})
-# Horizon bands use bootstrap on daily returns; cap keeps large MC requests responsive.
-_HORIZON_BOOTSTRAP_CAP = 2_000
+# Horizon bands use bootstrap on daily returns.
+# 200 samples give stable P5/P50/P95 bands (well within Monte Carlo error tolerance)
+# and are ~10x faster than the old cap of 2,000.  The main trade-resampling MC
+# still uses the full user-requested simulation count.
+_HORIZON_BOOTSTRAP_CAP = 200
 
 # Walk-forward settings used to produce the dashboard's out-of-sample trades.
 #

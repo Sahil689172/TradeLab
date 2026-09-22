@@ -1,0 +1,35 @@
+Starting - numpy import...
+numpy OK in 161ms
+
+== _max_run CORRECTNESS ==
+  PASS  all_true  (292.8ms)
+  PASS  all_false  (0.2ms)
+  PASS  alternating  (0.3ms)
+  PASS  run_at_end  (0.1ms)
+  PASS  run_at_start  (0.2ms)
+  PASS  empty_steps  (0.0ms)
+  PASS  single_step  (0.1ms)
+  PASS  multi_row  (0.3ms)
+
+== MATCH REFERENCE (random) ==
+  PASS  n_sims=1,n_steps=1  (50.5ms)
+  PASS  n_sims=10,n_steps=20  (0.4ms)
+  PASS  n_sims=100,n_steps=50  (0.7ms)
+  PASS  n_sims=1000,n_steps=100  (2.2ms)
+  PASS  n_sims=5000,n_steps=200  (15.8ms)
+
+== SPEEDUP (new vs old) ==
+  n_sims=  1000  n_steps= 50  OLD=   0.24ms  NEW=   0.71ms  speedup=0.3x
+  n_sims= 10000  n_steps= 50  OLD=   0.68ms  NEW=   3.43ms  speedup=0.2x
+  n_sims=100000  n_steps= 50  OLD=  22.24ms  NEW=  65.05ms  speedup=0.3x
+  n_sims=  1000  n_steps=200  OLD=   0.73ms  NEW=   2.30ms  speedup=0.3x
+
+== RESULT ==
+  Passed: 13  Failed: 0
+
+SPEEDUP TABLE:
+                 Shape     OLD(ms)     NEW(ms)   Speedup
+  (  1000, 50)             0.24        0.71      0.3x
+  ( 10000, 50)             0.68        3.43      0.2x
+  (100000, 50)            22.24       65.05      0.3x
+  (  1000,200)             0.73        2.30      0.3x

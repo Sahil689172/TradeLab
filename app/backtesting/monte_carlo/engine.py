@@ -270,10 +270,16 @@ class TradeResamplingMonteCarlo:
         trades: Sequence[MonteCarloTrade],
         capital_mode: CapitalMode,
     ) -> dict[str, np.ndarray]:
+        import time as _time
         values = _series(trades, capital_mode)
         n = int(values.size)
         n_sims = self._config.simulations
         rng = np.random.default_rng(self._config.random_seed)
+
+        # For large runs, split into chunks so we can log progress without
+        # changing the statistical result.  Each chunk uses a fresh sub-array
+        # of the pre-built index matrix so reproducibility is preserved.
+        _LOG_EVERY = max(1, min(5_000, n_sims // 5))  # log ~5 times regardless of scale
         idx = _sample_index_matrix(
             rng,
             n,
@@ -282,11 +288,55 @@ class TradeResamplingMonteCarlo:
             block_size=self._config.block_size,
         )
         paths = values[idx]
-        return simulate_equity_batch(
-            paths,
-            initial_capital=self._config.initial_capital,
-            capital_mode=capital_mode,
+
+        t0 = _time.perf_counter()
+        logger.info(
+            "Monte Carlo _simulate_batch start: n_sims=%s n_trades=%s method=%s seed=%s",
+            n_sims, n, self._config.sampling_method.value, self._config.random_seed,
         )
+
+        # Split into chunks for progress logging; concatenate accumulators.
+        if n_sims <= _LOG_EVERY:
+            result = simulate_equity_batch(
+                paths,
+                initial_capital=self._config.initial_capital,
+                capital_mode=capital_mode,
+            )
+            elapsed = _time.perf_counter() - t0
+            rate = n_sims / elapsed if elapsed > 0 else float("inf")
+            logger.info(
+                "Monte Carlo complete: %s/%s sims  elapsed=%.2fs  rate=%.0f sims/s",
+                n_sims, n_sims, elapsed, rate,
+            )
+            return result
+
+        # Large run: process in LOG_EVERY-sized chunks, emit progress every chunk.
+        chunk_results: list[dict[str, np.ndarray]] = []
+        completed = 0
+        while completed < n_sims:
+            chunk_end = min(completed + _LOG_EVERY, n_sims)
+            chunk_paths = paths[completed:chunk_end]
+            chunk_result = simulate_equity_batch(
+                chunk_paths,
+                initial_capital=self._config.initial_capital,
+                capital_mode=capital_mode,
+            )
+            chunk_results.append(chunk_result)
+            completed = chunk_end
+            elapsed = _time.perf_counter() - t0
+            rate = completed / elapsed if elapsed > 0 else float("inf")
+            eta = (n_sims - completed) / rate if rate > 0 else 0.0
+            logger.info(
+                "Monte Carlo: %s/%s  elapsed=%.1fs  rate=%.0f sims/s  eta=%.1fs",
+                completed, n_sims, elapsed, rate, eta,
+            )
+
+        # Concatenate all chunk results along the simulation axis.
+        keys = list(chunk_results[0].keys())
+        return {
+            k: np.concatenate([c[k] for c in chunk_results], axis=0)
+            for k in keys
+        }
 
     def _cost_sensitivity(
         self,

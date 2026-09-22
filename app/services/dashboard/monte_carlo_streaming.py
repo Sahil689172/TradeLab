@@ -568,7 +568,7 @@ class MonteCarloStreamingService:
                     daily_returns,
                     current_price=current_price,
                     horizons=horizons,
-                    simulations=min(request.simulations, 2_000),
+                    simulations=min(request.simulations, 200),
                     random_seed=request.random_seed,
                 ):
                     horizon_rows.append(
