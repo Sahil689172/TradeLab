@@ -9,7 +9,7 @@ export default defineConfig({
     proxy: {
       // ws:true carries the room socket through.
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: process.env.VITE_API_TARGET ?? 'http://127.0.0.1:8000',
         changeOrigin: true,
         ws: true,
         // Monte Carlo streaming can take several minutes for the historical
